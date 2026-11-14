@@ -1,0 +1,14 @@
+[project]
+name = "dzmod"
+version = "0.1.0"
+description = "Check, update and install DayZ workshop mods via SteamCMD"
+readme = "README.md"
+requires-python = ">=3.14"
+dependencies = []
+
+[project.scripts]
+dzmod = 'dzmod.cli:main'
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
