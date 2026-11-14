@@ -9,16 +9,16 @@ class ACFFile:
 
     def __init__(self, path: Path) -> None:
         self.path = path
-        self.data = self._parse(path.read_text(encoding="utf-8")) if path.is_file() else {}
+        self.data = self._parse(path.read_text(encoding="utf-8", errors="replace")) if path.is_file() else {}
 
     def installed_timestamps(self) -> dict[str, int]:
         """Returns `timeupdated` per mod ID from the `WorkshopItemsInstalled` section."""
 
         items = self.data.get("appworkshop", {}).get("workshopitemsinstalled", {})
         return {
-            mod_id: int(entry.get("timeupdated", 0))
+            mod_id: int(entry.get("timeupdated", "0"))
             for mod_id, entry in items.items()
-            if isinstance(entry, dict)
+            if isinstance(entry, dict) and entry.get("timeupdated", "0").isdigit()
         }
 
     @staticmethod

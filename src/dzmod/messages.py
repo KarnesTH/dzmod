@@ -13,8 +13,32 @@ TEXTS = {
         "steamcmd_failed": "SteamCMD exited with code {code}.",
         "installed": "Updated {mod_id} {title}",
         "download_failed": "Download failed for {mod_id} {title}",
-        "api_error": "Steam API request failed: {error}",
-        "login_missing": "No Steam login given. Use --login or set DZMOD_STEAM_LOGIN.",
+        "downloads_failed": "{count} mod(s) could not be updated.",
+        "login_missing": "No Steam login given. Use --login or set DZMOD_STEAM_LOGIN in {path}.",
+        "api_unreachable": "Steam API not reachable: {error}",
+        "api_http_error": "Steam API answered with HTTP {code}.",
+        "api_invalid_response": "Steam API returned an invalid response.",
+        "steamcmd_missing": "SteamCMD not found ('{binary}'). Install SteamCMD or pass its path with --steamcmd.",
+        "not_a_server": "{path} is not a DayZ server directory ({binary} not found).",
+        "config_missing": "No configuration found. Run dzmod once in a terminal or create {path}.",
+        "file_error": "File error at {path}: {error}",
+        "setup_intro": (
+            "Setting up dzmod.\n"
+            "\n"
+            "Steam login\n"
+            "  Username of a Steam account that owns DayZ.\n"
+            "  dzmod does not store a password. On the first download SteamCMD\n"
+            "  signs in by itself and remembers the login.\n"
+            "\n"
+            "Steam Web API key (optional)\n"
+            "  Only needed for the Workshop mod list.\n"
+            "  Create a key: https://steamcommunity.com/dev/apikey\n"
+            "\n"
+            "Saved to: {path}\n"
+        ),
+        "setup_login": "Steam login: ",
+        "setup_api_key": "Steam Web API key (optional): ",
+        "setup_done": "Saved to {path}.",
     },
     "de": {
         "no_mods": "Keine Mod-Ordner in {path} gefunden.",
@@ -27,8 +51,32 @@ TEXTS = {
         "steamcmd_failed": "SteamCMD wurde mit Code {code} beendet.",
         "installed": "Aktualisiert {mod_id} {title}",
         "download_failed": "Download fehlgeschlagen für {mod_id} {title}",
-        "api_error": "Steam-API-Anfrage fehlgeschlagen: {error}",
-        "login_missing": "Kein Steam-Login angegeben. --login nutzen oder DZMOD_STEAM_LOGIN setzen.",
+        "downloads_failed": "{count} Mod(s) konnten nicht aktualisiert werden.",
+        "login_missing": "Kein Steam-Login angegeben. --login nutzen oder DZMOD_STEAM_LOGIN in {path} setzen.",
+        "api_unreachable": "Steam API nicht erreichbar: {error}",
+        "api_http_error": "Steam API hat mit HTTP {code} geantwortet.",
+        "api_invalid_response": "Steam API hat eine ungültige Antwort geliefert.",
+        "steamcmd_missing": "SteamCMD nicht gefunden ('{binary}'). SteamCMD installieren oder den Pfad mit --steamcmd angeben.",
+        "not_a_server": "{path} ist kein DayZ-Server-Verzeichnis ({binary} nicht gefunden).",
+        "config_missing": "Keine Konfiguration gefunden. dzmod einmal im Terminal starten oder {path} anlegen.",
+        "file_error": "Dateifehler bei {path}: {error}",
+        "setup_intro": (
+            "dzmod wird eingerichtet.\n"
+            "\n"
+            "Steam-Login\n"
+            "  Benutzername eines Steam-Accounts, der DayZ besitzt.\n"
+            "  dzmod speichert kein Passwort. Beim ersten Download meldet sich\n"
+            "  SteamCMD selbst an und merkt sich die Anmeldung.\n"
+            "\n"
+            "Steam-Web-API-Key (optional)\n"
+            "  Wird nur für die Mod-Liste aus dem Workshop gebraucht.\n"
+            "  Key erstellen: https://steamcommunity.com/dev/apikey\n"
+            "\n"
+            "Gespeichert wird in: {path}\n"
+        ),
+        "setup_login": "Steam-Login: ",
+        "setup_api_key": "Steam-Web-API-Key (optional): ",
+        "setup_done": "Gespeichert in {path}.",
     },
 }
 

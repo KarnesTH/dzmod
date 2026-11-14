@@ -1,4 +1,7 @@
+import shutil
 import subprocess
+
+from dzmod.errors import DzmodError
 
 
 class SteamCmd:
@@ -7,7 +10,13 @@ class SteamCmd:
     APP_ID = "221100"
 
     def __init__(self, binary: str, login: str) -> None:
-        self.binary = binary
+        """Resolves `binary` via PATH or as a path. Raises DzmodError if it cannot be found."""
+
+        executable = shutil.which(binary)
+        if executable is None:
+            raise DzmodError("steamcmd_missing", binary=binary)
+
+        self.binary = executable
         self.login = login
 
     def download(self, mod_ids: list[str]) -> int:
