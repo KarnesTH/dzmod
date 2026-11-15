@@ -1,0 +1,125 @@
+{
+  "2415195639": {
+    "name": "Banov",
+    "source": {
+      "type": "github",
+      "repo": "KubeloLive/Banov-Central-Economy",
+      "path": "dayzOffline.banov"
+    },
+    "mission": "dayzOffline.banov",
+    "expansion": "0_INCOMPLETE/Banov"
+  },
+  "3375557599": {
+    "name": "BanovFrost",
+    "source": {
+      "type": "github",
+      "repo": "KubeloLive/Banov-Central-Economy",
+      "path": "dayzOffline.banovfrost"
+    },
+    "mission": "dayzOffline.banovfrost",
+    "expansion": "0_INCOMPLETE/Banov"
+  },
+  "1602372402": {
+    "name": "DeerIsle",
+    "source": {
+      "type": "github",
+      "repo": "johnmclane666/Deerisle-Stable",
+      "path": "V5.9/empty.deerisle"
+    },
+    "mission": "empty.deerisle",
+    "expansion": "0_INCOMPLETE/DeerIsle"
+  },
+  "2344585107": {
+    "name": "Rostow",
+    "source": {
+      "type": "github",
+      "repo": "CypeR79/DayZ-Projects",
+      "path": "Rostow/mission"
+    },
+    "mission": "empty.rostow",
+    "expansion": "0_INCOMPLETE/Rostow"
+  },
+  "2563233742": {
+    "name": "TakistanPlus",
+    "source": {
+      "type": "github",
+      "repo": "CypeR79/DayZ-Projects",
+      "path": "TakistanPlus/mission"
+    },
+    "mission": "empty.takistanplus",
+    "expansion": "TakistanPlus"
+  },
+  "1580589252": {
+    "name": "Chiemsee",
+    "source": {
+      "type": "github",
+      "repo": "Tyson89/Mission-Files",
+      "path": "dayzoffline.chiemsee"
+    },
+    "mission": "dayzoffline.chiemsee",
+    "expansion": "Chiemsee"
+  },
+  "2462896799": {
+    "name": "Esseker",
+    "source": {
+      "type": "github",
+      "repo": "InclementDab/Esseker-Server",
+      "path": "Mission Files/dayzOffline.Esseker",
+      "outdated": true
+    },
+    "mission": "dayzOffline.Esseker",
+    "expansion": "0_INCOMPLETE/Esseker"
+  },
+  "2973953648": {
+    "name": "Anastara",
+    "source": {
+      "type": "github",
+      "repo": "BATTLESQUATCH/anastara-mission",
+      "path": "dayzOffline.anastara"
+    },
+    "mission": "dayzOffline.anastara",
+    "expansion": null
+  },
+  "2289461232": {
+    "name": "Namalsk",
+    "source": {
+      "type": "mod",
+      "variants": {
+        "Regular": "Extras/Regular/regular.namalsk",
+        "Hardcore": "Extras/Hardcore/hardcore.namalsk"
+      }
+    },
+    "mission": {
+      "Regular": "regular.namalsk",
+      "Hardcore": "hardcore.namalsk"
+    },
+    "expansion": "Namalsk/{variant}"
+  },
+  "1880753439": {
+    "name": "Valning",
+    "source": {
+      "type": "manual",
+      "link": "https://discord.gg/ab7yX9b"
+    },
+    "mission": null,
+    "expansion": "0_INCOMPLETE/Valning"
+  },
+  "2153795105": {
+    "name": "Takistan",
+    "source": {
+      "type": "manual",
+      "link": "https://discord.gg/YBjM8zk"
+    },
+    "mission": null,
+    "expansion": null
+  },
+  "3296994216": {
+    "name": "Alteria",
+    "source": {
+      "type": "manual",
+      "link": "https://discord.gg/fXtNDZV"
+    },
+    "mission": null,
+    "expansion": null
+  }
+}

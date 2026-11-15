@@ -31,11 +31,9 @@ class ModInstaller:
 
         return self.economy is not None and self.economy.exists
 
-    def install(self, mod_id: str, title: str) -> InstallResult:
-        """Copies the mod into the server directory, copies `.bikey` files from its `keys` folder (any case) that
-        are missing in the server's `keys` folder and, if the mission exists, writes the extracted CE entries into a
-        freshly created `ce_<mod_name>` folder and registers its files in cfgeconomycore.xml. `choose` is called
-        with the title, the kind and the variant folders when map variants cannot be matched to the terrain."""
+    def install(self, mod_id: str, title: str, with_ce: bool = True) -> InstallResult:
+        """Copies the mod into the server directory and copies `.bikey` files from its `keys` folder (any case) that
+        are missing in the server's `keys` folder. With `with_ce` the CE entries are extracted as in `extract_ce`."""
 
         self.updater.install(mod_id)
         mod_dir = self.updater.server_dir / mod_id
@@ -49,9 +47,20 @@ class ModInstaller:
                     shutil.copy2(key, target)
                     result.keys.append(key.name)
 
+        if with_ce:
+            self.extract_ce(result)
+        return result
+
+    def extract_ce(self, result: InstallResult) -> InstallResult:
+        """If the mission exists, writes the CE entries extracted from the installed mod folder into a freshly
+        created `ce_<mod_name>` folder and registers its files in cfgeconomycore.xml. `choose` is called with the
+        title, the kind and the variant folders when map variants cannot be matched to the terrain."""
+
         if not self.has_mission:
             return result
 
+        mod_dir = self.updater.server_dir / result.mod_id
+        title = result.title
         extractor = CEExtractor(mod_dir, self.terrain, lambda kind, options: self.choose(title, kind, options))
         data = extractor.extract()
         result.invalid = data.invalid
@@ -62,7 +71,7 @@ class ModInstaller:
         if not any(data.entries.values()):
             return result
 
-        folder = f"ce_{self.folder_name(mod_id, title)}"
+        folder = f"ce_{self.folder_name(result.mod_id, title)}"
         ce_dir = self.mission_dir / folder
         if ce_dir.exists():
             shutil.rmtree(ce_dir)

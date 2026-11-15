@@ -10,12 +10,17 @@ from dzmod.utils.errors import DzmodError
 from dzmod.utils.console import Console
 from dzmod.utils.env_file import EnvFile
 from dzmod.utils.messages import Messages
+from dzmod.core.expansion_installer import ExpansionInstaller
+from dzmod.core.map_catalog import MapCatalog
+from dzmod.core.map_installer import MapInstaller
 from dzmod.core.mod_installer import ModInstaller
 from dzmod.core.mod_list import ModList
 from dzmod.core.mod_picker import ModPicker
 from dzmod.core.mod_remover import ModRemover
 from dzmod.core.mod_table import ModTable
+from dzmod.models.expansion_result import ExpansionResult
 from dzmod.models.install_result import InstallResult
+from dzmod.models.map_result import MapResult
 from dzmod.models.mod_state import ModState
 from dzmod.core.mod_updater import ModUpdater
 from dzmod.core.server_config import ServerConfig
@@ -30,6 +35,7 @@ class CLI:
     directory; `check`, `update`, `install` and `remove` need a DayZ server directory."""
 
     SERVER_BINARY = "DayZServer"
+    EXPANSION_PREFIX = "dayz-expansion"
     STEAM_ID_PREFIX = "7656119"
 
     def __init__(self, messages: Messages) -> None:
@@ -37,6 +43,7 @@ class CLI:
         self.args = self._parser().parse_args()
         self.env = EnvFile()
         self.console = Console()
+        self.catalog = MapCatalog()
         self.updater = self._create_updater(SteamCmd.locate(getattr(self.args, "steamcmd", None)))
 
     def _create_updater(self, executable: str | None) -> ModUpdater:
@@ -175,8 +182,10 @@ class CLI:
 
     def _install(self) -> None:
         """Collects the mods from `--mod-id`, `--collection` or, by default, the selection from the mod list, skips
-        mods already in the server, downloads the rest in one SteamCMD run, installs them with keys and CE files and
-        prints the `-mod=` parameter. Raises DzmodError if the login is missing or a download failed."""
+        mods already in the server and resolves the mission source of a selected map before downloading the rest in
+        one SteamCMD run. The map is set up first (mission and template), then the CE of already installed mods moves
+        to the new mission, then the other mods are installed and the Expansion CE is added when an Expansion mod is
+        present. Raises DzmodError if the login is missing, the map mission cannot be resolved or a download failed."""
 
         if self.args.mod_id:
             mods = self._mods_from_ids()
@@ -189,11 +198,13 @@ class CLI:
             print(self.messages.get("nothing_to_install"))
             return
 
-        installed = set(self.updater.mod_ids())
+        installed = self.updater.mod_ids()
         for item in mods:
             if item.mod_id in installed:
                 print(self.messages.get("already_installed", mod_id=item.mod_id, title=item.title))
-        pending = [item for item in mods if item.mod_id not in installed]
+        pending = self._limit_maps([item for item in mods if item.mod_id not in installed], installed)
+        map_item = next((item for item in pending if self.catalog.is_map(item.mod_id)), None)
+        prepared = self._map_installer().prepare(map_item.mod_id) if map_item else None
 
         failed: list[ModState] = []
         if pending:
@@ -211,23 +222,108 @@ class CLI:
                 print(self.messages.get("steamcmd_failed", code=code), file=sys.stderr)
 
             done, failed = self.updater.downloaded(states)
-            installer = ModInstaller(self.updater, ServerConfig(self.updater.server_dir), self._choose_variant)
+            results: list[InstallResult] = []
+            map_result, refreshed = None, []
+
+            for state in done:
+                if self.catalog.is_map(state.mod_id):
+                    results.append(self._installer().install(state.mod_id, state.title, with_ce=False))
+                    map_result = self._map_installer().install(prepared)
+                    refreshed = self._refresh_ce(installed)
+
+            installer = self._installer()
             if done and not installer.has_mission:
                 print(self.messages.get("mission_missing", path=installer.mission_dir or ServerConfig.FILE_NAME),
                       file=sys.stderr)
+            results += [installer.install(state.mod_id, state.title)
+                        for state in done if not self.catalog.is_map(state.mod_id)]
 
-            results = [installer.install(state.mod_id, state.title) for state in done]
-            self._report_installs("section_install", "summary_install", results, failed)
+            expansion_result = self._sync_expansion(force=map_result is not None)
+
+            self._report_installs("section_install", results, failed)
+            self._report_map(map_result, refreshed)
+            self._report_expansion(expansion_result)
+            self._report_summary("summary_install", results, failed)
 
         self._report_launch_parameter()
 
         if failed:
             raise DzmodError("installs_failed", count=len(failed))
 
-    def _report_installs(self, section: str, summary: str, results: list[InstallResult],
-                         failed: list[ModState]) -> None:
-        """Prints the section with one block per installed mod (keys, map variant, CE files, warnings), one block per
-        failed download and a summary line."""
+    def _limit_maps(self, pending: list[WorkshopItem], installed: list[str]) -> list[WorkshopItem]:
+        """Allows one map mod per server: with several selected maps the user picks one (the others are dropped);
+        a selected map while another map mod is installed raises DzmodError."""
+
+        maps = [item for item in pending if self.catalog.is_map(item.mod_id)]
+        if not maps:
+            return pending
+
+        if len(maps) > 1:
+            names = [self.catalog.maps[item.mod_id]["name"] for item in maps]
+            choice = self._choose_option(self.messages.get("map_choose"), names)
+            if choice is None:
+                raise DzmodError("map_several", names=", ".join(names))
+            keep = maps[names.index(choice)]
+            pending = [item for item in pending if item not in maps or item is keep]
+            maps = [keep]
+
+        for mod_id in installed:
+            if self.catalog.is_map(mod_id) and mod_id != maps[0].mod_id:
+                raise DzmodError("map_installed", name=self.catalog.maps[mod_id]["name"])
+        return pending
+
+    def _installer(self) -> ModInstaller:
+        """Creates a ModInstaller for the mission currently set in serverDZ.cfg."""
+
+        return ModInstaller(self.updater, ServerConfig(self.updater.server_dir), self._choose_variant)
+
+    def _map_installer(self) -> MapInstaller:
+        """Creates a MapInstaller with the interactive variant and path prompts."""
+
+        return MapInstaller(
+            self.updater.server_dir, self.catalog,
+            lambda name, options: self._choose_option(self.messages.get("map_variant", name=name), options),
+            self._ask_mission_path,
+        )
+
+    def _refresh_ce(self, mod_ids: list[str]) -> list[InstallResult]:
+        """Extracts the CE entries of the given installed non-map mods again into the current mission."""
+
+        mod_ids = [mod_id for mod_id in mod_ids if not self.catalog.is_map(mod_id)]
+        if not mod_ids:
+            return []
+        items = self.updater.api.fetch(mod_ids)
+        installer = self._installer()
+        titles = {mod_id: items[mod_id].title if mod_id in items else "" for mod_id in mod_ids}
+        return [installer.extract_ce(InstallResult(mod_id=mod_id, title=titles[mod_id])) for mod_id in mod_ids]
+
+    def _sync_expansion(self, force: bool, titles: dict[str, str] | None = None) -> ExpansionResult | None:
+        """Adds the Expansion CE to the current mission if an Expansion mod is installed and it is missing or `force`
+        is set; removes it if no Expansion mod is left. `titles` maps the installed IDs to titles and is fetched if
+        not given. Returns None if nothing changed."""
+
+        config = ServerConfig(self.updater.server_dir)
+        if not config.template or not (self.updater.server_dir / "mpmissions" / config.template).is_dir():
+            return None
+
+        if titles is None:
+            items = self.updater.api.fetch(self.updater.mod_ids())
+            titles = {mod_id: item.title for mod_id, item in items.items()}
+
+        expansion = ExpansionInstaller(self.updater.server_dir / "mpmissions" / config.template)
+        present = any(title.casefold().startswith(self.EXPANSION_PREFIX) for title in titles.values())
+
+        if present and (force or not expansion.installed):
+            template = self.catalog.expansion_template(config.template)
+            return expansion.install(template) if template else ExpansionResult()
+        if not present and expansion.installed:
+            expansion.remove()
+            return ExpansionResult(removed=True)
+        return None
+
+    def _report_installs(self, section: str, results: list[InstallResult], failed: list[ModState]) -> None:
+        """Prints the section with one block per installed mod (keys, map variant, CE files, warnings) and one block
+        per failed download."""
 
         get = self.messages.get
         self.console.section(get(section))
@@ -259,10 +355,48 @@ class CLI:
             self.console.mod(state.title, state.mod_id, ok=False)
             self.console.detail("", get("download_failed"))
 
-        self.console.section(get("section_summary"))
-        self.console.highlight(get(summary, done=len(results), failed=len(failed),
-                                   keys=sum(len(result.keys) for result in results),
-                                   ce=sum(1 for result in results if result.ce_folder)))
+    def _report_map(self, result: MapResult | None, refreshed: list[InstallResult]) -> None:
+        """Prints the map section: mission, source, template and how many mods moved their CE to the new mission."""
+
+        if result is None:
+            return
+        get = self.messages.get
+        self.console.section(get("section_map"))
+        self.console.mod(result.name, result.mod_id, ok=True)
+        mission = result.mission + (f"  {get('mission_reused')}" if result.reused else "")
+        self.console.detail(get("label_mission"), mission)
+        self.console.detail(get("label_source"), result.source)
+        self.console.detail(get("label_template"), get("template_set", mission=result.mission))
+        if refreshed:
+            self.console.detail(get("label_ce"), get("ce_refreshed", count=sum(1 for r in refreshed if r.ce_folder)))
+        for key in result.warnings:
+            self.console.warning(get(key))
+
+    def _report_expansion(self, result: ExpansionResult | None) -> None:
+        """Prints the Expansion section: template, CE files and event spawns, or that the Expansion CE was removed."""
+
+        if result is None:
+            return
+        get = self.messages.get
+        self.console.section("Expansion")
+        if result.removed:
+            self.console.detail(get("label_ce"), get("expansion_removed"))
+        elif result.template is None:
+            self.console.warning(get("expansion_no_template"))
+        else:
+            self.console.detail(get("label_template"), result.template)
+            self.console.detail(get("label_ce"), f"expansion_ce ({', '.join(result.files)})")
+            self.console.detail(get("label_spawns"), get("event_spawns", count=result.event_spawns))
+            if result.incomplete:
+                self.console.warning(get("expansion_incomplete"))
+
+    def _report_summary(self, summary: str, results: list[InstallResult], failed: list[ModState]) -> None:
+        """Prints the summary section with counts of installed, failed, copied keys and CE folders."""
+
+        self.console.section(self.messages.get("section_summary"))
+        self.console.highlight(self.messages.get(summary, done=len(results), failed=len(failed),
+                                                 keys=sum(len(result.keys) for result in results),
+                                                 ce=sum(1 for result in results if result.ce_folder)))
 
     def _report_launch_parameter(self) -> None:
         """Prints the start parameter section for all mods in the server directory."""
@@ -275,8 +409,9 @@ class CLI:
             self.console.highlight(self.messages.get("no_mods_left"))
 
     def _remove(self) -> None:
-        """Lets the user pick installed mods (or takes `--mod-id`), asks for confirmation, removes them with
-        ModRemover and prints the report and the new start parameter."""
+        """Lets the user pick installed mods (or takes `--mod-id`), asks for confirmation and removes them: a map mod
+        first (mission deleted, template back to vanilla, CE of the remaining mods moved there), then the other mods.
+        The Expansion CE is removed when no Expansion mod is left. Prints the report and the new start parameter."""
 
         installed = self.updater.mod_ids()
         if not installed:
@@ -299,8 +434,12 @@ class CLI:
             print(self.messages.get("selection_cancelled"))
             return
 
+        selected.sort(key=lambda item: not self.catalog.is_map(item.mod_id))
         for item in selected:
             print(f"  {item.mod_id:<12} {item.title}")
+        template = ServerConfig(self.updater.server_dir).template
+        if any(self.catalog.is_map(item.mod_id) for item in selected):
+            print(self.messages.get("remove_map_warning", mission=template))
         answer = input(self.messages.get("remove_confirm", count=len(selected))).strip().lower()
         if answer not in self.messages.get("yes_answers").split(","):
             print(self.messages.get("remove_cancelled"))
@@ -308,8 +447,18 @@ class CLI:
 
         selected_ids = {item.mod_id for item in selected}
         remaining = [mod_id for mod_id in installed if mod_id not in selected_ids]
-        remover = ModRemover(self.updater.server_dir, ServerConfig(self.updater.server_dir))
-        results = [remover.remove(item.mod_id, item.title, remaining) for item in selected]
+        results, removed_mission, refreshed = [], None, []
+
+        for item in selected:
+            remover = ModRemover(self.updater.server_dir, ServerConfig(self.updater.server_dir))
+            results.append(remover.remove(item.mod_id, item.title, remaining))
+            if self.catalog.is_map(item.mod_id):
+                removed_mission = self._map_installer().remove(item.mod_id) or removed_mission
+                if removed_mission:
+                    refreshed = self._refresh_ce(remaining)
+
+        expansion_result = self._sync_expansion(force=removed_mission is not None,
+                                                titles={mod_id: titles[mod_id] for mod_id in remaining})
 
         get = self.messages.get
         self.console.section(get("section_remove"))
@@ -324,7 +473,14 @@ class CLI:
                 self.console.detail(get("label_keys"), get("key_kept", name=key, users=names))
             if result.ce_folder:
                 self.console.detail(get("label_ce"), get("ce_removed", folder=result.ce_folder))
+            if self.catalog.is_map(result.mod_id) and removed_mission:
+                self.console.detail(get("label_mission"), get("mission_removed", mission=removed_mission))
+                self.console.detail(get("label_template"), get("template_set", mission=MapCatalog.VANILLA_MISSION))
+                if refreshed:
+                    self.console.detail(get("label_ce"),
+                                        get("ce_refreshed", count=sum(1 for r in refreshed if r.ce_folder)))
 
+        self._report_expansion(expansion_result)
         self.console.section(get("section_summary"))
         self.console.highlight(get("summary_remove", done=len(results),
                                    keys=sum(len(result.keys_removed) for result in results),
@@ -332,13 +488,18 @@ class CLI:
         self._report_launch_parameter()
 
     def _choose_variant(self, title: str, kind: str, options: list[str]) -> str | None:
-        """Lists the map variant folders of a mod and returns the one picked by number, or None on empty input or
-        without a terminal."""
+        """Asks which map variant folder of a mod's CE files should be used."""
+
+        return self._choose_option(self.messages.get("variant_question", title=title, kind=kind), options)
+
+    def _choose_option(self, question: str, options: list[str]) -> str | None:
+        """Prints the question with numbered options and returns the option picked by number, or None on empty input
+        or without a terminal."""
 
         if not sys.stdin.isatty():
             return None
 
-        print(self.messages.get("variant_question", title=title, kind=kind))
+        print(question)
         for number, option in enumerate(options, start=1):
             print(f"  {number}) {option}")
 
@@ -348,6 +509,16 @@ class CLI:
                 return None
             if answer.isdigit() and 1 <= int(answer) <= len(options):
                 return options[int(answer) - 1]
+
+    def _ask_mission_path(self, name: str, link: str) -> Path | None:
+        """Explains where the mission files of a map come from and asks for the path of the downloaded mission
+        folder. Returns None on empty input or without a terminal."""
+
+        if not sys.stdin.isatty():
+            return None
+        print(self.messages.get("map_manual_question", name=name, link=link))
+        answer = input(self.messages.get("map_manual_prompt")).strip()
+        return Path(answer) if answer else None
 
     def _launch_order(self) -> list[str]:
         """Returns the mod IDs in the order of the collection file, resolved via the stored mod list. Returns an
@@ -534,7 +705,8 @@ class CLI:
 
     def _update(self, outdated: list[ModState]) -> None:
         """Downloads the outdated mods, verifies them via the ACF and installs the current ones again, which also
-        re-extracts their CE entries. Raises DzmodError if the login is missing or at least one download failed."""
+        re-extracts their CE entries (map mods are only copied). Raises DzmodError if the login is missing or at least
+        one download failed."""
 
         login = self.args.login or self.env.get("DZMOD_STEAM_LOGIN")
         if not login:
@@ -547,10 +719,12 @@ class CLI:
             print(self.messages.get("steamcmd_failed", code=code), file=sys.stderr)
 
         done, failed = self.updater.downloaded(outdated)
-        installer = ModInstaller(self.updater, ServerConfig(self.updater.server_dir), self._choose_variant)
+        installer = self._installer()
 
-        results = [installer.install(state.mod_id, state.title) for state in done]
-        self._report_installs("section_update", "summary_update", results, failed)
+        results = [installer.install(state.mod_id, state.title, with_ce=not self.catalog.is_map(state.mod_id))
+                   for state in done]
+        self._report_installs("section_update", results, failed)
+        self._report_summary("summary_update", results, failed)
         self._report_launch_parameter()
 
         if failed:

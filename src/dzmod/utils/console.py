@@ -7,7 +7,7 @@ class Console:
     Colors are ANSI codes and are only used when stdout is a terminal and NO_COLOR is not set."""
 
     WIDTH = 64
-    LABEL_WIDTH = 7
+    LABEL_WIDTH = 10
     GREEN, RED, YELLOW, BOLD, RESET = "\033[32m", "\033[31m", "\033[33m", "\033[1m", "\033[0m"
 
     def __init__(self) -> None:
