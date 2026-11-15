@@ -1,7 +1,7 @@
 import shutil
 import subprocess
 
-from dzmod.errors import DzmodError
+from dzmod.utils.errors import DzmodError
 
 
 class SteamCmd:
