@@ -6,11 +6,6 @@ from importlib.metadata import version
 from pathlib import Path
 
 from dzmod.core.collection_file import CollectionFile
-from dzmod.utils.errors import DzmodError
-from dzmod.utils.banner_parser import BannerParser
-from dzmod.utils.console import Console
-from dzmod.utils.env_file import EnvFile
-from dzmod.utils.messages import Messages
 from dzmod.core.expansion_installer import ExpansionInstaller
 from dzmod.core.map_catalog import MapCatalog
 from dzmod.core.map_installer import MapInstaller
@@ -19,16 +14,23 @@ from dzmod.core.mod_list import ModList
 from dzmod.core.mod_picker import ModPicker
 from dzmod.core.mod_remover import ModRemover
 from dzmod.core.mod_table import ModTable
-from dzmod.models.expansion_result import ExpansionResult
-from dzmod.models.install_result import InstallResult
-from dzmod.models.map_result import MapResult
-from dzmod.models.mod_state import ModState
 from dzmod.core.mod_updater import ModUpdater
 from dzmod.core.server_config import ServerConfig
 from dzmod.core.steam_cmd import SteamCmd
 from dzmod.core.steam_cmd_installer import SteamCmdInstaller
+from dzmod.core.steam_output import SteamOutput
 from dzmod.core.workshop_api import WorkshopAPI
+from dzmod.models.expansion_result import ExpansionResult
+from dzmod.models.install_result import InstallResult
+from dzmod.models.map_result import MapResult
+from dzmod.models.mod_state import ModState
 from dzmod.models.workshop_item import WorkshopItem
+from dzmod.utils.banner_parser import BannerParser
+from dzmod.utils.console import Console
+from dzmod.utils.env_file import EnvFile
+from dzmod.utils.errors import DzmodError
+from dzmod.utils.formatter import Formatter
+from dzmod.utils.messages import Messages
 
 
 class CLI:
@@ -82,22 +84,31 @@ class CLI:
     def _check(self) -> None:
         """Prints the update state of all mods in the server directory and runs the update for `update`."""
 
+        get = self.messages.get
         if not self.updater.mod_ids():
-            print(self.messages.get("no_mods", path=self.updater.server_dir))
+            self.console.note(get("no_mods", path=self.updater.server_dir))
             return
 
         states = self.updater.check()
-        self._print_states(states)
         outdated = [state for state in states if state.outdated]
+        missing = [state for state in states if not state.available]
 
-        if not outdated:
-            print(self.messages.get("all_current"))
-            return
+        self.console.section(get("section_mods"), get("count_installed", count=len(states)))
+        for state in states:
+            if not state.available:
+                self.console.state(state.title, state.mod_id, "missing", get("unavailable"))
+            elif state.outdated:
+                self.console.state(state.title, state.mod_id, "outdated", get("outdated"))
+            else:
+                self.console.state(state.title, state.mod_id, "ok")
+        self.console.blank()
+        self.console.highlight(get("check_summary", current=len(states) - len(outdated) - len(missing),
+                                   outdated=len(outdated), missing=len(missing)))
 
-        print(self.messages.get("updates_found", count=len(outdated)))
-
-        if self.args.command == "update":
+        if outdated and self.args.command == "update":
             self._update(outdated)
+        elif outdated:
+            self.console.note(get("update_hint"))
 
     def _setup(self) -> None:
         """Asks for the Steam login (required), the SteamID64 (optional, 17 digits starting with STEAM_ID_PREFIX) and
@@ -108,9 +119,11 @@ class CLI:
             raise DzmodError("setup_needs_terminal" if self.env.exists else "config_missing", path=self.env.path)
 
         current = dict(self.env.values)
-        print(self.messages.get("setup_intro", path=self.env.path))
+        self.console.section(self.messages.get("section_setup"))
+        self.console.text(self.messages.get("setup_intro", path=self.env.path))
         if current:
-            print(self.messages.get("setup_keep"))
+            self.console.note(self.messages.get("setup_keep"))
+        self.console.blank()
 
         login = ""
         while not login:
@@ -124,26 +137,30 @@ class CLI:
                 break
             if steam_id.isdigit() and len(steam_id) == 17 and steam_id.startswith(self.STEAM_ID_PREFIX):
                 break
-            print(self.messages.get("steam_id_invalid"))
+            self.console.warning(self.messages.get("steam_id_invalid"))
 
         stored_key = current.get("DZMOD_STEAM_API_KEY", "")
         api_key = self._masked_input(self._prompt("setup_api_key", "*" * 8 if stored_key else None)).strip()
         api_key = api_key or stored_key
 
         self.env.create({"DZMOD_STEAM_LOGIN": login, "DZMOD_STEAM_ID": steam_id, "DZMOD_STEAM_API_KEY": api_key})
-        print(self.messages.get("setup_done", path=self.env.path))
+        self.console.blank()
+        self.console.success(self.messages.get("setup_done", path=self.env.path))
 
         executable = SteamCmd.locate()
         if executable:
-            print(self.messages.get("steamcmd_found", path=executable))
+            self.console.success(self.messages.get("steamcmd_found", path=executable))
         else:
             self._install_steam_cmd()
 
     def _prompt(self, key: str, current: str | None) -> str:
-        """Returns the prompt text for `key`, with the current value in brackets before the colon if there is one."""
+        """Returns the console prompt for `key`, with the current value muted in brackets before the colon if there
+        is one."""
 
         text = self.messages.get(key)
-        return f"{text.rstrip().rstrip(':')} [{current}]: " if current else text
+        if current:
+            text = f"{text.rstrip().rstrip(':')} {self.console.muted(f'[{current}]')}: "
+        return self.console.prompt(text)
 
     def _steam_cmd(self, login: str) -> SteamCmd:
         """Locates SteamCMD (`--steamcmd`, PATH, `~/Steam/steamcmd.sh`) and offers to install it if missing. After
@@ -168,18 +185,24 @@ class CLI:
         if not sys.stdin.isatty():
             return None
 
-        answer = input(self.messages.get("steamcmd_ask_install", path=installer.directory)).strip().lower()
-        if answer not in self.messages.get("yes_answers").split(","):
+        self.console.section("SteamCMD")
+        if not self._confirm(self.messages.get("steamcmd_ask_install", path=installer.directory)):
             return None
 
-        print(self.messages.get("steamcmd_installing", path=installer.directory))
+        self.console.note(self.messages.get("steamcmd_installing", path=installer.directory))
         executable = installer.install()
-        print(self.messages.get("steamcmd_first_run"))
+        self.console.note(self.messages.get("steamcmd_first_run"))
         if installer.first_run() != 0:
             raise DzmodError("steamcmd_libs_missing", command=installer.lib_command())
 
-        print(self.messages.get("steamcmd_installed", path=executable))
+        self.console.success(self.messages.get("steamcmd_installed", path=executable))
         return executable
+
+    def _confirm(self, question: str) -> bool:
+        """Asks a yes/no question with the console prompt and returns True for one of the `yes_answers`."""
+
+        answer = input(self.console.prompt(question)).strip().lower()
+        return answer in self.messages.get("yes_answers").split(",")
 
     def _install(self) -> None:
         """Collects the mods from `--mod-id`, `--collection` or, by default, the selection from the mod list, skips
@@ -196,13 +219,15 @@ class CLI:
             mods = self._mods_from_list()
 
         if not mods:
-            print(self.messages.get("nothing_to_install"))
+            self.console.note(self.messages.get("nothing_to_install"))
             return
 
         installed = self.updater.mod_ids()
-        for item in mods:
-            if item.mod_id in installed:
-                print(self.messages.get("already_installed", mod_id=item.mod_id, title=item.title))
+        skipped = [item for item in mods if item.mod_id in installed]
+        if skipped:
+            self.console.section(self.messages.get("section_selection"))
+            for item in skipped:
+                self.console.state(item.title, item.mod_id, "ok", self.messages.get("picker_installed"))
         pending = self._limit_maps([item for item in mods if item.mod_id not in installed], installed)
         map_item = next((item for item in pending if self.catalog.is_map(item.mod_id)), None)
         prepared = self._map_installer().prepare(map_item.mod_id) if map_item else None
@@ -217,11 +242,7 @@ class CLI:
             states = [ModState(mod_id=item.mod_id, title=item.title, local_updated=0,
                                remote_updated=item.time_updated) for item in pending]
 
-            print(self.messages.get("downloading", count=len(states)))
-            code = steam_cmd.download([state.mod_id for state in states])
-            if code != 0:
-                print(self.messages.get("steamcmd_failed", code=code), file=sys.stderr)
-
+            self._download(steam_cmd, states)
             done, failed = self.updater.downloaded(states)
             results: list[InstallResult] = []
             map_result, refreshed = None, []
@@ -234,8 +255,8 @@ class CLI:
 
             installer = self._installer()
             if done and not installer.has_mission:
-                print(self.messages.get("mission_missing", path=installer.mission_dir or ServerConfig.FILE_NAME),
-                      file=sys.stderr)
+                self.console.warning(self.messages.get("mission_missing",
+                                                       path=installer.mission_dir or ServerConfig.FILE_NAME))
             results += [installer.install(state.mod_id, state.title)
                         for state in done if not self.catalog.is_map(state.mod_id)]
 
@@ -251,6 +272,33 @@ class CLI:
         if failed:
             raise DzmodError("installs_failed", count=len(failed))
 
+    def _download(self, steam_cmd: SteamCmd, states: list[ModState]) -> None:
+        """Runs the SteamCMD download in a `Download` section: SteamCMD lines are printed muted, the running item as
+        a progress line and every finished item as a mod line with its size or the SteamCMD error."""
+
+        get = self.messages.get
+        titles = {state.mod_id: state.title for state in states}
+        self.console.section(get("section_download"), get("count_mods", count=len(states)))
+        size = Formatter(self.messages).size
+        begun: list[str] = []
+
+        def started(mod_id: str) -> None:
+            if not begun:
+                self.console.close_line()
+                self.console.blank()
+            begun.append(mod_id)
+            self.console.progress(get("download_running", title=titles.get(mod_id) or mod_id))
+
+        def result(mod_id: str, ok: bool, length: int, reason: str) -> None:
+            self.console.mod(titles.get(mod_id, ""), mod_id, ok)
+            self.console.detail(get("label_size") if ok else get("label_error"), size(length) if ok else reason)
+
+        output = SteamOutput(self.console.raw, self.console.partial, started, result)
+        code = steam_cmd.download([state.mod_id for state in states], output)
+        self.console.close_line()
+        if code != 0:
+            self.console.warning(get("steamcmd_failed", code=code))
+
     def _limit_maps(self, pending: list[WorkshopItem], installed: list[str]) -> list[WorkshopItem]:
         """Allows one map mod per server: with several selected maps the user picks one (the others are dropped);
         a selected map while another map mod is installed raises DzmodError."""
@@ -261,7 +309,7 @@ class CLI:
 
         if len(maps) > 1:
             names = [self.catalog.maps[item.mod_id]["name"] for item in maps]
-            choice = self._choose_option(self.messages.get("map_choose"), names)
+            choice = self._choose_option(self.messages.get("section_map"), self.messages.get("map_choose"), names)
             if choice is None:
                 raise DzmodError("map_several", names=", ".join(names))
             keep = maps[names.index(choice)]
@@ -283,7 +331,8 @@ class CLI:
 
         return MapInstaller(
             self.updater.server_dir, self.catalog,
-            lambda name, options: self._choose_option(self.messages.get("map_variant", name=name), options),
+            lambda name, options: self._choose_option(self.messages.get("label_mission"),
+                                                      self.messages.get("map_variant", name=name), options),
             self._ask_mission_path,
         )
 
@@ -414,9 +463,10 @@ class CLI:
         first (mission deleted, template back to vanilla, CE of the remaining mods moved there), then the other mods.
         The Expansion CE is removed when no Expansion mod is left. Prints the report and the new start parameter."""
 
+        get = self.messages.get
         installed = self.updater.mod_ids()
         if not installed:
-            print(self.messages.get("no_mods", path=self.updater.server_dir))
+            self.console.note(get("no_mods", path=self.updater.server_dir))
             return
 
         items = self.updater.api.fetch(installed)
@@ -426,24 +476,27 @@ class CLI:
         if self.args.mod_id:
             for mod_id in self.args.mod_id:
                 if mod_id not in installed:
-                    print(self.messages.get("not_installed", mod_id=mod_id), file=sys.stderr)
+                    self.console.warning(get("not_installed", mod_id=mod_id))
             selected = [item for item in mods if item.mod_id in self.args.mod_id]
         else:
-            selected = ModPicker(mods, self.messages, self.args.verbose).run()
+            selected = ModPicker(mods, self.messages, self.args.verbose, get("picker_title_remove"),
+                                 get("count_installed", count=len(mods))).run()
 
         if not selected:
-            print(self.messages.get("selection_cancelled"))
+            self.console.note(get("selection_cancelled"))
             return
 
         selected.sort(key=lambda item: not self.catalog.is_map(item.mod_id))
+        self.console.section(get("section_selection"), get("count_mods", count=len(selected)))
         for item in selected:
-            print(f"  {item.mod_id:<12} {item.title}")
+            self.console.item(item.title, item.mod_id)
         template = ServerConfig(self.updater.server_dir).template
         if any(self.catalog.is_map(item.mod_id) for item in selected):
-            print(self.messages.get("remove_map_warning", mission=template))
-        answer = input(self.messages.get("remove_confirm", count=len(selected))).strip().lower()
-        if answer not in self.messages.get("yes_answers").split(","):
-            print(self.messages.get("remove_cancelled"))
+            self.console.blank()
+            self.console.warning(get("remove_map_warning", mission=template))
+        self.console.blank()
+        if not self._confirm(get("remove_confirm", count=len(selected))):
+            self.console.note(get("remove_cancelled"))
             return
 
         selected_ids = {item.mod_id for item in selected}
@@ -491,34 +544,41 @@ class CLI:
     def _choose_variant(self, title: str, kind: str, options: list[str]) -> str | None:
         """Asks which map variant folder of a mod's CE files should be used."""
 
-        return self._choose_option(self.messages.get("variant_question", title=title, kind=kind), options)
+        return self._choose_option(self.messages.get("section_variant"),
+                                   self.messages.get("variant_question", title=title, kind=kind), options)
 
-    def _choose_option(self, question: str, options: list[str]) -> str | None:
-        """Prints the question with numbered options and returns the option picked by number, or None on empty input
-        or without a terminal."""
+    def _choose_option(self, section: str, question: str, options: list[str]) -> str | None:
+        """Prints a section with the question and numbered options and returns the option picked by number, or None
+        on empty input or without a terminal."""
 
         if not sys.stdin.isatty():
             return None
 
-        print(question)
+        self.console.section(section)
+        self.console.highlight(question)
+        self.console.blank()
         for number, option in enumerate(options, start=1):
-            print(f"  {number}) {option}")
+            self.console.option(number, option)
+        self.console.blank()
 
         while True:
-            answer = input(self.messages.get("variant_prompt")).strip()
+            answer = input(self.console.prompt(self.messages.get("variant_prompt"))).strip()
             if not answer:
                 return None
             if answer.isdigit() and 1 <= int(answer) <= len(options):
                 return options[int(answer) - 1]
 
     def _ask_mission_path(self, name: str, link: str) -> Path | None:
-        """Explains where the mission files of a map come from and asks for the path of the downloaded mission
-        folder. Returns None on empty input or without a terminal."""
+        """Explains in a section where the mission files of a map come from and asks for the path of the downloaded
+        mission folder. Returns None on empty input or without a terminal."""
 
         if not sys.stdin.isatty():
             return None
-        print(self.messages.get("map_manual_question", name=name, link=link))
-        answer = input(self.messages.get("map_manual_prompt")).strip()
+        self.console.section(self.messages.get("label_mission"))
+        self.console.highlight(self.messages.get("map_manual", name=name, link=link))
+        self.console.note(self.messages.get("map_manual_hint"))
+        self.console.blank()
+        answer = input(self.console.prompt(self.messages.get("map_manual_prompt"))).strip()
         return Path(answer) if answer else None
 
     def _launch_order(self) -> list[str]:
@@ -545,24 +605,31 @@ class CLI:
                 raise DzmodError("invalid_id", mod_id=mod_id)
 
         items = self.updater.api.fetch(mod_ids)
-        for mod_id in mod_ids:
-            if mod_id not in items:
-                print(self.messages.get("unavailable_id", mod_id=mod_id), file=sys.stderr)
+        missing = [mod_id for mod_id in mod_ids if mod_id not in items]
+        if missing:
+            self.console.section(self.messages.get("section_selection"))
+            for mod_id in missing:
+                self.console.warning(self.messages.get("unavailable_id", mod_id=mod_id))
         return [items[mod_id] for mod_id in mod_ids if mod_id in items]
 
     def _mods_from_list(self) -> list[WorkshopItem]:
-        """Loads the mod list, lets the user pick mods and, if more than one was picked, offers to add them to the
-        collection file."""
+        """Loads the mod list, lets the user pick mods (installed ones are marked and not selectable) and, if more
+        than one was picked, offers to add them to the collection file."""
 
+        get = self.messages.get
         items = self._load_mod_list()
-        selected = ModPicker(items, self.messages, self.args.verbose).run()
+        selected = ModPicker(items, self.messages, self.args.verbose, get("picker_title_install"),
+                             get("picker_subscribed", count=len(items)), set(self.updater.mod_ids())).run()
         if not selected:
-            print(self.messages.get("selection_cancelled"))
+            self.console.note(get("selection_cancelled"))
             return []
 
+        self.console.section(get("section_selection"), get("count_mods", count=len(selected)))
+        for item in selected:
+            self.console.item(item.title, item.mod_id)
         if len(selected) > 1:
-            answer = input(self.messages.get("ask_collection")).strip().lower()
-            if answer in self.messages.get("yes_answers").split(","):
+            self.console.blank()
+            if self._confirm(get("ask_collection")):
                 self._save_collection(selected, items)
         return selected
 
@@ -575,21 +642,21 @@ class CLI:
 
         if collection.exists:
             added = collection.append(titles)
-            print(self.messages.get("collection_extended", path=collection.path, count=len(added)))
+            self.console.success(self.messages.get("collection_extended", path=collection.path, count=len(added)))
         else:
             name = ""
             while not name:
-                name = input(self.messages.get("ask_collection_name")).strip()
-            description = input(self.messages.get("ask_collection_description")).strip()
+                name = input(self.console.prompt(self.messages.get("ask_collection_name"))).strip()
+            description = input(self.console.prompt(self.messages.get("ask_collection_description"))).strip()
             collection.create(name, description, titles)
-            print(self.messages.get("collection_created", path=collection.path, count=len(titles)))
+            self.console.success(self.messages.get("collection_created", path=collection.path, count=len(titles)))
 
         counts: dict[str, int] = {}
         for item in items:
             counts[item.title.casefold()] = counts.get(item.title.casefold(), 0) + 1
         for title in titles:
             if counts.get(title.casefold(), 0) > 1:
-                print(self.messages.get("title_not_unique", title=title), file=sys.stderr)
+                self.console.warning(self.messages.get("title_not_unique", title=title))
 
     def _mods_from_collection(self) -> list[WorkshopItem]:
         """Reads the collection file of the server and resolves its titles via the mod list. Titles without or with
@@ -603,14 +670,18 @@ class CLI:
         if not collection.mods:
             raise DzmodError("collection_empty", path=collection.path)
 
-        print(self.messages.get("collection_header", name=collection.info.get("name", collection.path.name),
-                                count=len(collection.mods)))
-
         resolved, missing, ambiguous = collection.resolve(self._load_mod_list())
+        self.console.section(self.messages.get("section_collection"),
+                             self.messages.get("count_mods", count=len(collection.mods)))
+        self.console.highlight(collection.info.get("name", collection.path.name))
+        if collection.info.get("description"):
+            self.console.note(collection.info["description"])
+        if missing or ambiguous:
+            self.console.blank()
         for title in missing:
-            print(self.messages.get("mod_not_found", title=title), file=sys.stderr)
+            self.console.warning(self.messages.get("mod_not_found", title=title))
         for title, mod_ids in ambiguous.items():
-            print(self.messages.get("mod_ambiguous", title=title, ids=", ".join(mod_ids)), file=sys.stderr)
+            self.console.warning(self.messages.get("mod_ambiguous", title=title, ids=", ".join(mod_ids)))
         return resolved
 
     def _show_mods(self) -> None:
@@ -620,7 +691,7 @@ class CLI:
         items = self._refresh_mod_list() if self.args.refresh else self._load_mod_list()
         if not items:
             raise DzmodError("mod_list_empty")
-        ModTable(items, self.messages).print()
+        ModTable(items, self.messages, self.console).print()
 
     def _load_mod_list(self) -> list[WorkshopItem]:
         """Reads the mod list, creating it from Steam first if it does not exist yet. Raises DzmodError if the list
@@ -643,13 +714,14 @@ class CLI:
         if not mod_list.steam_id:
             raise DzmodError("steam_id_missing")
 
-        print(self.messages.get("mod_list_loading"))
+        self.console.section(self.messages.get("section_subscribed"))
+        self.console.progress(self.messages.get("mod_list_loading"))
         try:
             items = mod_list.refresh(self._print_progress)
         finally:
-            print()
+            self.console.close_line()
 
-        print(self.messages.get("mod_list_saved", count=len(items), path=mod_list.path))
+        self.console.success(self.messages.get("mod_list_saved", count=len(items), path=mod_list.path))
         return items
 
     def _mod_list(self) -> ModList:
@@ -660,7 +732,7 @@ class CLI:
     def _print_progress(self, loaded: int, total: int) -> None:
         """Overwrites the current terminal line with the loading progress."""
 
-        print("\r" + self.messages.get("mod_list_progress", loaded=loaded, total=total), end="", flush=True)
+        self.console.progress(self.messages.get("mod_list_progress", loaded=loaded, total=total))
 
     @staticmethod
     def _masked_input(prompt: str) -> str:
@@ -714,11 +786,7 @@ class CLI:
             raise DzmodError("login_missing", path=self.env.path)
 
         steam_cmd = self._steam_cmd(login)
-        print(self.messages.get("downloading", count=len(outdated)))
-        code = steam_cmd.download([state.mod_id for state in outdated])
-        if code != 0:
-            print(self.messages.get("steamcmd_failed", code=code), file=sys.stderr)
-
+        self._download(steam_cmd, outdated)
         done, failed = self.updater.downloaded(outdated)
         installer = self._installer()
 
@@ -731,26 +799,14 @@ class CLI:
         if failed:
             raise DzmodError("downloads_failed", count=len(failed))
 
-    def _print_states(self, states: list[ModState]) -> None:
-        """Prints one line per mod: ID, status and title."""
-
-        for state in states:
-            if not state.available:
-                status = self.messages.get("unavailable")
-            elif state.outdated:
-                status = self.messages.get("outdated")
-            else:
-                status = self.messages.get("up_to_date")
-            print(f"{state.mod_id:<12} {status:<30} {state.title}")
-
     @staticmethod
     def _parser() -> argparse.ArgumentParser:
         """Builds the parser with the global path options and the `setup` / `mods` / `check` / `update` / `install` /
         `remove` subcommands."""
 
-        parser = BannerParser(prog="dzmod", formatter_class=argparse.RawDescriptionHelpFormatter)
+        parser = BannerParser(prog="dzmod")
         parser.add_argument("-V", "--version", action="version",
-                            version=f"{BannerParser.banner()}\n\n%(prog)s {version('dzmod')}")
+                            version=BannerParser.banner().version("dzmod", version("dzmod")))
         parser.add_argument("--server-dir", default=".", help="DayZ server directory")
         parser.add_argument("--steam-dir", help="SteamCMD data directory (default: directory of steamcmd.sh, "
                                                 "otherwise ~/.steam/steam)")
@@ -785,17 +841,18 @@ class CLI:
 
 
 def main() -> None:
-    """Runs the CLI and turns DzmodError, file errors, Ctrl+C and Ctrl+D into a message on stderr and a non-zero
-    exit."""
+    """Runs the CLI and turns DzmodError and file errors into a `✘` message on stderr and a non-zero exit; Ctrl+C and
+    Ctrl+D end the open line and exit with 130."""
 
     messages = Messages()
+    console = Console()
     try:
         CLI(messages).run()
     except DzmodError as err:
-        print(messages.get(err.key, **err.values), file=sys.stderr)
+        console.error(messages.get(err.key, **err.values))
         sys.exit(1)
     except OSError as err:
-        print(messages.get("file_error", path=err.filename or "", error=err.strerror or err), file=sys.stderr)
+        console.error(messages.get("file_error", path=err.filename or "", error=err.strerror or err))
         sys.exit(1)
     except (KeyboardInterrupt, EOFError):
         print(file=sys.stderr)

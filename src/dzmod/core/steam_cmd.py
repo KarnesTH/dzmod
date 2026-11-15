@@ -1,13 +1,22 @@
+import codecs
+import os
+import pty
+import select
 import shutil
 import subprocess
+import sys
 from pathlib import Path
+from typing import ClassVar
+
+from dzmod.core.steam_output import SteamOutput
 
 
 class SteamCmd:
     """Runs SteamCMD workshop downloads for DayZ."""
 
-    APP_ID = "221100"
-    DEFAULT_SCRIPT = Path.home() / "Steam" / "steamcmd.sh"
+    APP_ID: ClassVar[str] = "221100"
+    DEFAULT_SCRIPT: ClassVar[Path] = Path.home() / "Steam" / "steamcmd.sh"
+    IDLE_SECONDS: ClassVar[float] = 0.3
 
     def __init__(self, executable: str, login: str) -> None:
         self.executable = executable
@@ -31,12 +40,42 @@ class SteamCmd:
             return Path(executable).parent.resolve()
         return Path.home() / ".steam" / "steam"
 
-    def download(self, mod_ids: list[str]) -> int:
-        """Downloads all IDs in a single SteamCMD session and returns its exit code."""
+    def download(self, mod_ids: list[str], output: SteamOutput) -> int:
+        """Downloads all IDs in a single SteamCMD session and returns its exit code. The output is read and passed to
+        `output`; on a terminal SteamCMD writes into a pseudo terminal so it flushes prompts immediately, while its
+        input stays connected to the real terminal (password, Steam Guard code)."""
 
         args = [self.executable, "+login", self.login]
         for mod_id in mod_ids:
             args += ["+workshop_download_item", self.APP_ID, mod_id]
         args.append("+quit")
 
-        return subprocess.run(args, check=False).returncode
+        if sys.stdout.isatty():
+            reader, writer = pty.openpty()
+            process = subprocess.Popen(args, stdout=writer, stderr=writer)
+            os.close(writer)
+        else:
+            process = subprocess.Popen(args, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+            reader = process.stdout.fileno()
+
+        decoder = codecs.getincrementaldecoder("utf-8")(errors="replace")
+        try:
+            while True:
+                ready, _, _ = select.select([reader], [], [], self.IDLE_SECONDS)
+                if not ready:
+                    output.idle()
+                    continue
+                try:
+                    data = os.read(reader, 4096)
+                except OSError:
+                    break
+                if not data:
+                    break
+                output.feed(decoder.decode(data))
+        finally:
+            output.feed(decoder.decode(b"", final=True))
+            output.finish()
+            if process.stdout is None:
+                os.close(reader)
+
+        return process.wait()

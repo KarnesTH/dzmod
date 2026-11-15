@@ -14,12 +14,19 @@ class Banner:
         self.lines = files("dzmod").joinpath("data", "banner.txt").read_text(encoding="utf-8").splitlines()
 
     def render(self) -> str:
-        """Replaces the markers with the ANSI color codes and appends a reset to every colored line; without colors
+        """Returns all banner lines with the markers replaced."""
+
+        return "\n".join(self._colorize(line) for line in self.lines)
+
+    def version(self, prog: str, number: str) -> str:
+        """Returns the banner, an empty line and `prog number` with the number in the gear color."""
+
+        return f"{self.render()}\n\n{prog} {self._colorize('{g}' + number)}"
+
+    def _colorize(self, line: str) -> str:
+        """Replaces the markers with the ANSI color codes and appends a reset if the line is colored; without colors
         the markers are removed."""
 
-        rendered = []
-        for line in self.lines:
-            for marker, code in self.COLORS.items():
-                line = line.replace(f"{{{marker}}}", code if self.colors else "")
-            rendered.append(f"{line}{self.RESET}" if self.colors and "\033" in line else line)
-        return "\n".join(rendered)
+        for marker, code in self.COLORS.items():
+            line = line.replace(f"{{{marker}}}", code if self.colors else "")
+        return f"{line}{self.RESET}" if self.colors and "\033" in line else line

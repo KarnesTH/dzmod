@@ -26,7 +26,8 @@ class ModUpdater:
         )
 
     def check(self) -> list[ModState]:
-        """Reads local timestamps from the ACF and remote ones from the API."""
+        """Reads local timestamps from the ACF and remote ones from the API; mods the API does not return get None as
+        remote timestamp."""
 
         mod_ids = self.mod_ids()
         if not mod_ids:
@@ -40,7 +41,7 @@ class ModUpdater:
                 mod_id=mod_id,
                 title=remote[mod_id].title if mod_id in remote else "",
                 local_updated=local.get(mod_id, 0),
-                remote_updated=remote[mod_id].time_updated if mod_id in remote else 0,
+                remote_updated=remote[mod_id].time_updated if mod_id in remote else None,
             )
             for mod_id in mod_ids
         ]

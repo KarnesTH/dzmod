@@ -6,7 +6,7 @@ class ModState:
     mod_id: str
     title: str
     local_updated: int
-    remote_updated: int
+    remote_updated: int | None
 
     @property
     def available(self) -> bool:
