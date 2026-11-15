@@ -15,6 +15,7 @@ from dzmod.core.mod_table import ModTable
 from dzmod.models.mod_state import ModState
 from dzmod.core.mod_updater import ModUpdater
 from dzmod.core.steam_cmd import SteamCmd
+from dzmod.core.steam_cmd_installer import SteamCmdInstaller
 from dzmod.core.workshop_api import WorkshopAPI
 from dzmod.models.workshop_item import WorkshopItem
 
@@ -30,11 +31,14 @@ class CLI:
         self.messages = messages
         self.args = self._parser().parse_args()
         self.env = EnvFile()
-        self.updater = ModUpdater(
-            server_dir=Path(self.args.server_dir).resolve(),
-            steam_dir=Path(self.args.steam_dir).expanduser().resolve(),
-            api=WorkshopAPI(),
-        )
+        self.updater = self._create_updater(SteamCmd.locate(getattr(self.args, "steamcmd", None)))
+
+    def _create_updater(self, executable: str | None) -> ModUpdater:
+        """Creates the ModUpdater with `--steam-dir` if given, otherwise with the data directory of `executable`."""
+
+        steam_dir = Path(self.args.steam_dir).expanduser() if self.args.steam_dir else SteamCmd.steam_dir(executable)
+        return ModUpdater(server_dir=Path(self.args.server_dir).resolve(), steam_dir=steam_dir.resolve(),
+                          api=WorkshopAPI())
 
     def run(self) -> None:
         """Runs the first-start setup if needed and dispatches to the subcommand; without a subcommand `check` runs.
@@ -81,29 +85,85 @@ class CLI:
 
     def _setup(self) -> None:
         """Asks for the Steam login (required), the SteamID64 (optional, 17 digits starting with STEAM_ID_PREFIX) and
-        the API key (optional, masked with `*`) and writes them to the env file. Raises DzmodError if stdin is not a
-        terminal."""
+        the API key (optional, masked with `*`); an empty input keeps the value already stored in the env file. Writes
+        the values, then looks for SteamCMD and offers to install it. Raises DzmodError if stdin is not a terminal."""
 
         if not sys.stdin.isatty():
             raise DzmodError("setup_needs_terminal" if self.env.exists else "config_missing", path=self.env.path)
 
+        current = dict(self.env.values)
         print(self.messages.get("setup_intro", path=self.env.path))
+        if current:
+            print(self.messages.get("setup_keep"))
 
         login = ""
         while not login:
-            login = input(self.messages.get("setup_login")).strip()
+            login = input(self._prompt("setup_login", current.get("DZMOD_STEAM_LOGIN"))).strip()
+            login = login or current.get("DZMOD_STEAM_LOGIN", "")
 
         while True:
-            steam_id = input(self.messages.get("setup_steam_id")).strip()
-            valid = steam_id.isdigit() and len(steam_id) == 17 and steam_id.startswith(self.STEAM_ID_PREFIX)
-            if not steam_id or valid:
+            steam_id = input(self._prompt("setup_steam_id", current.get("DZMOD_STEAM_ID"))).strip()
+            if not steam_id:
+                steam_id = current.get("DZMOD_STEAM_ID", "")
+                break
+            if steam_id.isdigit() and len(steam_id) == 17 and steam_id.startswith(self.STEAM_ID_PREFIX):
                 break
             print(self.messages.get("steam_id_invalid"))
 
-        api_key = self._masked_input(self.messages.get("setup_api_key")).strip()
+        stored_key = current.get("DZMOD_STEAM_API_KEY", "")
+        api_key = self._masked_input(self._prompt("setup_api_key", "*" * 8 if stored_key else None)).strip()
+        api_key = api_key or stored_key
 
         self.env.create({"DZMOD_STEAM_LOGIN": login, "DZMOD_STEAM_ID": steam_id, "DZMOD_STEAM_API_KEY": api_key})
         print(self.messages.get("setup_done", path=self.env.path))
+
+        executable = SteamCmd.locate()
+        if executable:
+            print(self.messages.get("steamcmd_found", path=executable))
+        else:
+            self._install_steam_cmd()
+
+    def _prompt(self, key: str, current: str | None) -> str:
+        """Returns the prompt text for `key`, with the current value in brackets before the colon if there is one."""
+
+        text = self.messages.get(key)
+        return f"{text.rstrip().rstrip(':')} [{current}]: " if current else text
+
+    def _steam_cmd(self, login: str) -> SteamCmd:
+        """Locates SteamCMD (`--steamcmd`, PATH, `~/Steam/steamcmd.sh`) and offers to install it if missing. After
+        an installation the ModUpdater is recreated with the new data directory. Raises DzmodError if SteamCMD is
+        neither found nor installed."""
+
+        executable = SteamCmd.locate(self.args.steamcmd)
+        if executable is None and not self.args.steamcmd:
+            executable = self._install_steam_cmd()
+            if executable:
+                self.updater = self._create_updater(executable)
+        if executable is None:
+            raise DzmodError("steamcmd_missing")
+        return SteamCmd(executable, login)
+
+    def _install_steam_cmd(self) -> str | None:
+        """Asks whether SteamCMD should be installed into `~/Steam`, installs it and runs it once. Prints the
+        command for the 32-bit libraries if that first run fails. Returns the script path, or None if declined or no
+        terminal is attached."""
+
+        installer = SteamCmdInstaller()
+        if not sys.stdin.isatty():
+            return None
+
+        answer = input(self.messages.get("steamcmd_ask_install", path=installer.directory)).strip().lower()
+        if answer not in self.messages.get("yes_answers").split(","):
+            return None
+
+        print(self.messages.get("steamcmd_installing", path=installer.directory))
+        executable = installer.install()
+        print(self.messages.get("steamcmd_first_run"))
+        if installer.first_run() != 0:
+            raise DzmodError("steamcmd_libs_missing", command=installer.lib_command())
+
+        print(self.messages.get("steamcmd_installed", path=executable))
+        return executable
 
     def _install(self) -> None:
         """Collects the mods from `--mod-id`, `--collection` or, by default, the selection from the mod list and
@@ -300,7 +360,7 @@ class CLI:
         if not login:
             raise DzmodError("login_missing", path=self.env.path)
 
-        steam_cmd = SteamCmd(self.args.steamcmd, login)
+        steam_cmd = self._steam_cmd(login)
         print(self.messages.get("downloading", count=len(outdated)))
         code = steam_cmd.download([state.mod_id for state in outdated])
         if code != 0:
@@ -338,7 +398,8 @@ class CLI:
         parser = argparse.ArgumentParser(prog="dzmod")
         parser.add_argument("-V", "--version", action="version", version=f"%(prog)s {version('dzmod')}")
         parser.add_argument("--server-dir", default=".", help="DayZ server directory")
-        parser.add_argument("--steam-dir", default="~/.steam/steam", help="Steam/SteamCMD root")
+        parser.add_argument("--steam-dir", help="SteamCMD data directory (default: directory of steamcmd.sh, "
+                                                "otherwise ~/.steam/steam)")
 
         subparsers = parser.add_subparsers(dest="command", required=False)
         subparsers.add_parser("setup", help="set the Steam login, SteamID64 and Steam Web API key")
@@ -348,12 +409,14 @@ class CLI:
 
         update = subparsers.add_parser("update", help="download outdated mods and copy them into the server directory")
         update.add_argument("--login", help="Steam account that owns DayZ")
-        update.add_argument("--steamcmd", default="steamcmd", help="SteamCMD binary")
+        update.add_argument("--steamcmd",
+                            help="SteamCMD executable (default: steamcmd in PATH, then ~/Steam/steamcmd.sh)")
 
         install = subparsers.add_parser("install",
                                         help="pick from your subscribed mods, or install by ID or collection")
         install.add_argument("--login", help="Steam account that owns DayZ")
-        install.add_argument("--steamcmd", default="steamcmd", help="SteamCMD binary")
+        install.add_argument("--steamcmd",
+                             help="SteamCMD executable (default: steamcmd in PATH, then ~/Steam/steamcmd.sh)")
         install.add_argument("-v", "--verbose", action="store_true", help="show more columns in the mod list")
         source = install.add_mutually_exclusive_group()
         source.add_argument("--mod-id", nargs="+", metavar="ID", help="one or more mod IDs")
