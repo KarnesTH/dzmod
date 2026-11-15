@@ -9,6 +9,7 @@
   <img src="https://img.shields.io/badge/python-3.14-3776ab" alt="Python 3.14" />
   <img src="https://img.shields.io/badge/platform-linux-0c0a11" alt="Platform Linux" />
   <img src="https://img.shields.io/badge/dependencies-none-2ea44f" alt="No dependencies" />
+  <img src="https://img.shields.io/badge/license-MIT-b210f2" alt="License MIT" />
 </p>
 
 ## Installation
