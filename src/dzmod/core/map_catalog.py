@@ -1,13 +1,14 @@
 import json
 from importlib.resources import files
+from typing import ClassVar
 
 
 class MapCatalog:
     """Reads `dzmod/data/maps.json`: the known map mods by Workshop ID with their mission source, mission folder name
     and Expansion template."""
 
-    VANILLA_EXPANSION = {"chernarusplus": "Chernarus", "enoch": "Enoch"}
-    VANILLA_MISSION = "dayzOffline.chernarusplus"
+    VANILLA_EXPANSION: ClassVar[dict[str, str]] = {"chernarusplus": "Chernarus", "enoch": "Enoch"}
+    VANILLA_MISSION: ClassVar[str] = "dayzOffline.chernarusplus"
 
     def __init__(self) -> None:
         self.maps: dict[str, dict] = json.loads(

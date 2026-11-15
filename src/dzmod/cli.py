@@ -7,6 +7,7 @@ from pathlib import Path
 
 from dzmod.core.collection_file import CollectionFile
 from dzmod.utils.errors import DzmodError
+from dzmod.utils.banner_parser import BannerParser
 from dzmod.utils.console import Console
 from dzmod.utils.env_file import EnvFile
 from dzmod.utils.messages import Messages
@@ -747,8 +748,9 @@ class CLI:
         """Builds the parser with the global path options and the `setup` / `mods` / `check` / `update` / `install` /
         `remove` subcommands."""
 
-        parser = argparse.ArgumentParser(prog="dzmod")
-        parser.add_argument("-V", "--version", action="version", version=f"%(prog)s {version('dzmod')}")
+        parser = BannerParser(prog="dzmod", formatter_class=argparse.RawDescriptionHelpFormatter)
+        parser.add_argument("-V", "--version", action="version",
+                            version=f"{BannerParser.banner()}\n\n%(prog)s {version('dzmod')}")
         parser.add_argument("--server-dir", default=".", help="DayZ server directory")
         parser.add_argument("--steam-dir", help="SteamCMD data directory (default: directory of steamcmd.sh, "
                                                 "otherwise ~/.steam/steam)")

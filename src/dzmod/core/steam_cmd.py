@@ -39,4 +39,4 @@ class SteamCmd:
             args += ["+workshop_download_item", self.APP_ID, mod_id]
         args.append("+quit")
 
-        return subprocess.run(args).returncode
+        return subprocess.run(args, check=False).returncode

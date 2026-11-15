@@ -2,9 +2,9 @@ import shutil
 from pathlib import Path
 
 from dzmod.core.acf_file import ACFFile
-from dzmod.models.mod_state import ModState
 from dzmod.core.steam_cmd import SteamCmd
 from dzmod.core.workshop_api import WorkshopAPI
+from dzmod.models.mod_state import ModState
 
 
 class ModUpdater:

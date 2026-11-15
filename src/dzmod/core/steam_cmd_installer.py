@@ -1,6 +1,7 @@
 import subprocess
 import tarfile
 from pathlib import Path
+from typing import ClassVar
 from urllib.error import URLError
 from urllib.request import urlopen
 
@@ -12,8 +13,8 @@ class SteamCmdInstaller:
     """Installs SteamCMD into `~/Steam` as described by Valve: downloads the official archive, extracts it and runs
     `steamcmd.sh +quit` once so it updates itself."""
 
-    URL = "https://steamcdn-a.akamaihd.net/client/installer/steamcmd_linux.tar.gz"
-    LIB_COMMANDS = {
+    URL: ClassVar[str] = "https://steamcdn-a.akamaihd.net/client/installer/steamcmd_linux.tar.gz"
+    LIB_COMMANDS: ClassVar[dict[str, str]] = {
         "debian": "sudo apt-get install lib32gcc-s1",
         "fedora": "sudo dnf install glibc.i686 libstdc++.i686",
         "rhel": "sudo dnf install glibc.i686 libstdc++.i686",
@@ -55,7 +56,7 @@ class SteamCmdInstaller:
     def first_run(self) -> int:
         """Runs `steamcmd.sh +quit` once and returns its exit code."""
 
-        return subprocess.run([str(self.script), "+quit"]).returncode
+        return subprocess.run([str(self.script), "+quit"], check=False).returncode
 
     def lib_command(self) -> str:
         """Returns the command to install the 32-bit libraries for the distribution found in `/etc/os-release`

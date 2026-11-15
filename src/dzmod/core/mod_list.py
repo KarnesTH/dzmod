@@ -3,9 +3,9 @@ import os
 from collections.abc import Callable
 from pathlib import Path
 
-from dzmod.utils.errors import DzmodError
 from dzmod.core.workshop_api import WorkshopAPI
 from dzmod.models.workshop_item import WorkshopItem
+from dzmod.utils.errors import DzmodError
 
 
 class ModList:

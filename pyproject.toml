@@ -6,6 +6,12 @@ readme = "README.md"
 requires-python = ">=3.14"
 dependencies = []
 
+[dependency-groups]
+dev = ["pytest>=8"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
 [project.scripts]
 dzmod = 'dzmod.cli:main'
 

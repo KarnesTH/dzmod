@@ -5,8 +5,8 @@ from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 
-from dzmod.utils.errors import DzmodError
 from dzmod.models.workshop_item import WorkshopItem
+from dzmod.utils.errors import DzmodError
 
 
 class WorkshopAPI:

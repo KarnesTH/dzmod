@@ -2,8 +2,8 @@ import curses
 import locale
 from datetime import datetime
 
-from dzmod.utils.messages import Messages
 from dzmod.models.workshop_item import WorkshopItem
+from dzmod.utils.messages import Messages
 
 
 class ModPicker:

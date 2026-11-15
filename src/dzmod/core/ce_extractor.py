@@ -2,6 +2,7 @@ import re
 import xml.etree.ElementTree as ET
 from collections.abc import Callable
 from pathlib import Path
+from typing import ClassVar
 
 from dzmod.models.ce_data import CEData
 
@@ -12,13 +13,14 @@ class CEExtractor:
     """Reads the Central Economy entries (`types`, `spawnabletypes`, `events`) from all XML files of a mod,
     regardless of file names and folder layout, and merges them into one set per kind."""
 
-    KINDS = {"types": "type", "spawnabletypes": "type", "events": "event"}
-    FILE_NAMES = {"types": "types.xml", "spawnabletypes": "cfgspawnabletypes.xml", "events": "events.xml"}
-    SPAWNABLE_TAGS = {"attachments", "cargo", "hoarder", "damage", "tag"}
-    TYPES_TAGS = {"nominal", "lifetime", "restock", "min", "quantmin", "quantmax", "cost", "flags", "category",
-                  "usage", "value"}
+    KINDS: ClassVar[dict[str, str]] = {"types": "type", "spawnabletypes": "type", "events": "event"}
+    FILE_NAMES: ClassVar[dict[str, str]] = {"types": "types.xml", "spawnabletypes": "cfgspawnabletypes.xml",
+                                            "events": "events.xml"}
+    SPAWNABLE_TAGS: ClassVar[set[str]] = {"attachments", "cargo", "hoarder", "damage", "tag"}
+    TYPES_TAGS: ClassVar[set[str]] = {"nominal", "lifetime", "restock", "min", "quantmin", "quantmax", "cost", "flags",
+                                      "category", "usage", "value"}
     XML_HEADER = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
-    MAP_ALIASES = {"enoch": "livonia", "livonia": "enoch", "chernarusplus": "chernarus"}
+    MAP_ALIASES: ClassVar[dict[str, str]] = {"enoch": "livonia", "livonia": "enoch", "chernarusplus": "chernarus"}
 
     def __init__(self, mod_dir: Path, terrain: str | None,
                  choose: Callable[[str, list[str]], str | None]) -> None:
@@ -94,15 +96,15 @@ class CEExtractor:
             return None
 
     def _classify(self, root: ET.Element) -> list[tuple[str, ET.Element]]:
-        """Returns (kind, element) pairs. A known root element decides the kind for all children; under any other
-        root `event` children are events and `type` children are spawnabletypes if they contain spawnable tags,
-        otherwise types."""
+        """Returns (kind, element) pairs. A known root element decides the kind for all children; a single `type`/`event`
+        root counts as one entry; under any other root `event` children are events and `type` children are
+        spawnabletypes if they contain spawnable tags, otherwise types."""
 
         if root.tag in self.KINDS:
             return [(root.tag, child) for child in root if child.tag in (self.KINDS[root.tag], "damage")]
 
         pairs = []
-        for child in root:
+        for child in [root] if root.tag in ("type", "event") else root:
             if child.tag == "event":
                 pairs.append(("events", child))
             elif child.tag == "type":

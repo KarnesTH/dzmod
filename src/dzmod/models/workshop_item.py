@@ -12,7 +12,7 @@ class WorkshopItem:
     tags: tuple[str, ...] = field(default_factory=tuple)
 
     @classmethod
-    def from_detail(cls, detail: dict) -> "WorkshopItem":
+    def from_detail(cls, detail: dict) -> WorkshopItem:
         """Builds a WorkshopItem from a Steam `publishedfiledetails` entry. Missing numbers become 0. Raises KeyError
         if `publishedfileid` is missing."""
 
