@@ -7,11 +7,13 @@ from pathlib import Path
 
 from dzmod.core.collection_file import CollectionFile
 from dzmod.utils.errors import DzmodError
+from dzmod.utils.console import Console
 from dzmod.utils.env_file import EnvFile
 from dzmod.utils.messages import Messages
 from dzmod.core.mod_installer import ModInstaller
 from dzmod.core.mod_list import ModList
 from dzmod.core.mod_picker import ModPicker
+from dzmod.core.mod_remover import ModRemover
 from dzmod.core.mod_table import ModTable
 from dzmod.models.install_result import InstallResult
 from dzmod.models.mod_state import ModState
@@ -25,7 +27,7 @@ from dzmod.models.workshop_item import WorkshopItem
 
 class CLI:
     """Parses the arguments and runs the subcommands. `setup` and `mods` only configure the CLI and work in any
-    directory; `check`, `update` and `install` need a DayZ server directory."""
+    directory; `check`, `update`, `install` and `remove` need a DayZ server directory."""
 
     SERVER_BINARY = "DayZServer"
     STEAM_ID_PREFIX = "7656119"
@@ -34,6 +36,7 @@ class CLI:
         self.messages = messages
         self.args = self._parser().parse_args()
         self.env = EnvFile()
+        self.console = Console()
         self.updater = self._create_updater(SteamCmd.locate(getattr(self.args, "steamcmd", None)))
 
     def _create_updater(self, executable: str | None) -> ModUpdater:
@@ -63,6 +66,8 @@ class CLI:
 
         if self.args.command == "install":
             self._install()
+        elif self.args.command == "remove":
+            self._remove()
         else:
             self._check()
 
@@ -211,38 +216,120 @@ class CLI:
                 print(self.messages.get("mission_missing", path=installer.mission_dir or ServerConfig.FILE_NAME),
                       file=sys.stderr)
 
-            for state in done:
-                self._print_install(installer.install(state.mod_id, state.title))
-            for state in failed:
-                print(self.messages.get("download_failed", mod_id=state.mod_id, title=state.title), file=sys.stderr)
+            results = [installer.install(state.mod_id, state.title) for state in done]
+            self._report_installs("section_install", "summary_install", results, failed)
 
-        installer = ModInstaller(self.updater, ServerConfig(self.updater.server_dir), self._choose_variant)
-        if self.updater.mod_ids():
-            print(self.messages.get("launch_parameter", parameter=installer.launch_parameter(self._launch_order())))
+        self._report_launch_parameter()
 
         if failed:
             raise DzmodError("installs_failed", count=len(failed))
 
-    def _print_install(self, result: InstallResult, header: str = "mod_installed") -> None:
-        """Prints the mod with its copied keys, the written CE files and all CE notes."""
+    def _report_installs(self, section: str, summary: str, results: list[InstallResult],
+                         failed: list[ModState]) -> None:
+        """Prints the section with one block per installed mod (keys, map variant, CE files, warnings), one block per
+        failed download and a summary line."""
 
-        print(self.messages.get(header, mod_id=result.mod_id, title=result.title))
-        for key in result.keys:
-            print(self.messages.get("key_copied", name=key))
-        for kind, folder in result.chosen_variants.items():
-            print(self.messages.get("ce_variant", kind=kind, folder=folder))
-        if result.ce_folder:
-            print(self.messages.get("ce_added", folder=result.ce_folder))
-            for name, _, count in result.ce_files:
-                print(self.messages.get("ce_file", name=name, count=count))
-        for kind, names in result.conflicts.items():
-            print(self.messages.get("ce_conflict", kind=kind, names=", ".join(names)), file=sys.stderr)
-        for kind, options in result.skipped_variants.items():
-            print(self.messages.get("ce_variant_skipped", kind=kind, options=", ".join(options)), file=sys.stderr)
-        for path in result.invalid:
-            print(self.messages.get("ce_invalid", path=path), file=sys.stderr)
-        if result.economy_error:
-            print(self.messages.get("economy_core_invalid", error=result.economy_error), file=sys.stderr)
+        get = self.messages.get
+        self.console.section(get(section))
+
+        for index, result in enumerate(results):
+            if index:
+                self.console.blank()
+            self.console.mod(result.title, result.mod_id, ok=True)
+            if result.keys:
+                self.console.detail(get("label_keys"), ", ".join(result.keys))
+            if result.ce_folder:
+                self.console.detail(get("label_ce"), result.ce_folder)
+                for name, _, count in result.ce_files:
+                    self.console.detail("", get("ce_entries", name=name, count=count))
+            for kind, folder in result.chosen_variants.items():
+                self.console.detail(get("label_map"), f"{folder} ({kind})")
+            for kind, names in result.conflicts.items():
+                self.console.warning(get("ce_conflict", kind=kind, names=", ".join(names)))
+            for kind, options in result.skipped_variants.items():
+                self.console.warning(get("ce_variant_skipped", kind=kind, options=", ".join(options)))
+            for path in result.invalid:
+                self.console.warning(get("ce_invalid", path=path))
+            if result.economy_error:
+                self.console.warning(get("economy_core_invalid", error=result.economy_error))
+
+        for index, state in enumerate(failed):
+            if index or results:
+                self.console.blank()
+            self.console.mod(state.title, state.mod_id, ok=False)
+            self.console.detail("", get("download_failed"))
+
+        self.console.section(get("section_summary"))
+        self.console.highlight(get(summary, done=len(results), failed=len(failed),
+                                   keys=sum(len(result.keys) for result in results),
+                                   ce=sum(1 for result in results if result.ce_folder)))
+
+    def _report_launch_parameter(self) -> None:
+        """Prints the start parameter section for all mods in the server directory."""
+
+        installer = ModInstaller(self.updater, ServerConfig(self.updater.server_dir), self._choose_variant)
+        self.console.section(self.messages.get("section_launch"))
+        if self.updater.mod_ids():
+            self.console.highlight(installer.launch_parameter(self._launch_order()))
+        else:
+            self.console.highlight(self.messages.get("no_mods_left"))
+
+    def _remove(self) -> None:
+        """Lets the user pick installed mods (or takes `--mod-id`), asks for confirmation, removes them with
+        ModRemover and prints the report and the new start parameter."""
+
+        installed = self.updater.mod_ids()
+        if not installed:
+            print(self.messages.get("no_mods", path=self.updater.server_dir))
+            return
+
+        items = self.updater.api.fetch(installed)
+        mods = [items.get(mod_id) or WorkshopItem(mod_id=mod_id, title="", time_updated=0) for mod_id in installed]
+        titles = {item.mod_id: item.title or item.mod_id for item in mods}
+
+        if self.args.mod_id:
+            for mod_id in self.args.mod_id:
+                if mod_id not in installed:
+                    print(self.messages.get("not_installed", mod_id=mod_id), file=sys.stderr)
+            selected = [item for item in mods if item.mod_id in self.args.mod_id]
+        else:
+            selected = ModPicker(mods, self.messages, self.args.verbose).run()
+
+        if not selected:
+            print(self.messages.get("selection_cancelled"))
+            return
+
+        for item in selected:
+            print(f"  {item.mod_id:<12} {item.title}")
+        answer = input(self.messages.get("remove_confirm", count=len(selected))).strip().lower()
+        if answer not in self.messages.get("yes_answers").split(","):
+            print(self.messages.get("remove_cancelled"))
+            return
+
+        selected_ids = {item.mod_id for item in selected}
+        remaining = [mod_id for mod_id in installed if mod_id not in selected_ids]
+        remover = ModRemover(self.updater.server_dir, ServerConfig(self.updater.server_dir))
+        results = [remover.remove(item.mod_id, item.title, remaining) for item in selected]
+
+        get = self.messages.get
+        self.console.section(get("section_remove"))
+        for index, result in enumerate(results):
+            if index:
+                self.console.blank()
+            self.console.mod(result.title, result.mod_id, ok=True)
+            for key in result.keys_removed:
+                self.console.detail(get("label_keys"), get("key_removed", name=key))
+            for key, users in result.keys_kept.items():
+                names = ", ".join(titles.get(user, user) for user in users)
+                self.console.detail(get("label_keys"), get("key_kept", name=key, users=names))
+            if result.ce_folder:
+                self.console.detail(get("label_ce"), get("ce_removed", folder=result.ce_folder))
+
+        self.console.section(get("section_summary"))
+        self.console.highlight(get("summary_remove", done=len(results),
+                                   keys=sum(len(result.keys_removed) for result in results),
+                                   ce=sum(1 for result in results if result.ce_folder)))
+        self._report_launch_parameter()
 
     def _choose_variant(self, title: str, kind: str, options: list[str]) -> str | None:
         """Lists the map variant folders of a mod and returns the one picked by number, or None on empty input or
@@ -462,11 +549,9 @@ class CLI:
         done, failed = self.updater.downloaded(outdated)
         installer = ModInstaller(self.updater, ServerConfig(self.updater.server_dir), self._choose_variant)
 
-        for state in done:
-            self._print_install(installer.install(state.mod_id, state.title), header="installed")
-
-        for state in failed:
-            print(self.messages.get("download_failed", mod_id=state.mod_id, title=state.title), file=sys.stderr)
+        results = [installer.install(state.mod_id, state.title) for state in done]
+        self._report_installs("section_update", "summary_update", results, failed)
+        self._report_launch_parameter()
 
         if failed:
             raise DzmodError("downloads_failed", count=len(failed))
@@ -485,8 +570,8 @@ class CLI:
 
     @staticmethod
     def _parser() -> argparse.ArgumentParser:
-        """Builds the parser with the global path options and the `setup` / `mods` / `check` / `update` / `install`
-        subcommands."""
+        """Builds the parser with the global path options and the `setup` / `mods` / `check` / `update` / `install` /
+        `remove` subcommands."""
 
         parser = argparse.ArgumentParser(prog="dzmod")
         parser.add_argument("-V", "--version", action="version", version=f"%(prog)s {version('dzmod')}")
@@ -515,6 +600,10 @@ class CLI:
         source.add_argument("--mod-id", nargs="+", metavar="ID", help="one or more mod IDs")
         source.add_argument("--collection", action="store_true",
                             help=f"use {CollectionFile.FILE_NAME} in the server directory")
+
+        remove = subparsers.add_parser("remove", help="remove installed mods from the server")
+        remove.add_argument("-v", "--verbose", action="store_true", help="show more columns in the mod list")
+        remove.add_argument("--mod-id", nargs="+", metavar="ID", help="one or more installed mod IDs")
 
         return parser
 

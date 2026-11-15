@@ -44,3 +44,13 @@ class EconomyCore:
             text = prefix + block + text[end:]
 
         self.path.write_text(text, encoding="utf-8")
+
+    def remove(self, folder: str) -> bool:
+        """Removes the `<ce folder="...">` block including its line and returns True if one was found."""
+
+        text = self.path.read_text(encoding="utf-8")
+        pattern = re.compile(rf'[ \t]*<ce\s+folder="{re.escape(folder)}"\s*>.*?</ce>[ \t]*\n?', re.DOTALL)
+        new_text, count = pattern.subn("", text, count=1)
+        if count:
+            self.path.write_text(new_text, encoding="utf-8")
+        return bool(count)
