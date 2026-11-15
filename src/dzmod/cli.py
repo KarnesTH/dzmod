@@ -60,6 +60,11 @@ class CLI:
         """Runs the first-start setup if needed and dispatches to the subcommand; without a subcommand `check` runs.
         Raises DzmodError on any failure."""
 
+        if self.env.removed_api_key:
+            self.console.section(self.messages.get("section_security"))
+            self.console.warning(self.messages.get("api_key_removed", path=self.env.path))
+            self.console.note(self.messages.get("api_key_revoke"))
+
         if self.args.command == "setup":
             self._setup()
             return
@@ -111,9 +116,9 @@ class CLI:
             self.console.note(get("update_hint"))
 
     def _setup(self) -> None:
-        """Asks for the Steam login (required), the SteamID64 (optional, 17 digits starting with STEAM_ID_PREFIX) and
-        the API key (optional, masked with `*`); an empty input keeps the value already stored in the env file. Writes
-        the values, then looks for SteamCMD and offers to install it. Raises DzmodError if stdin is not a terminal."""
+        """Asks for the Steam login (required) and the SteamID64 (optional, 17 digits starting with STEAM_ID_PREFIX); an
+        empty input keeps the value already stored in the env file. Writes the values, then looks for SteamCMD and
+        offers to install it. Raises DzmodError if stdin is not a terminal."""
 
         if not sys.stdin.isatty():
             raise DzmodError("setup_needs_terminal" if self.env.exists else "config_missing", path=self.env.path)
@@ -139,13 +144,9 @@ class CLI:
                 break
             self.console.warning(self.messages.get("steam_id_invalid"))
 
-        stored_key = current.get("DZMOD_STEAM_API_KEY", "")
-        api_key = self._masked_input(self._prompt("setup_api_key", "*" * 8 if stored_key else None)).strip()
-        api_key = api_key or stored_key
-
-        self.env.create({"DZMOD_STEAM_LOGIN": login, "DZMOD_STEAM_ID": steam_id, "DZMOD_STEAM_API_KEY": api_key})
+        self.env.create({"DZMOD_STEAM_LOGIN": login, "DZMOD_STEAM_ID": steam_id})
         self.console.blank()
-        self.console.success(self.messages.get("setup_done", path=self.env.path))
+        self.console.success(self.messages.get("setup_done"))
 
         executable = SteamCmd.locate()
         if executable:
@@ -234,16 +235,9 @@ class CLI:
 
         failed: list[ModState] = []
         if pending:
-            login = self.args.login or self.env.get("DZMOD_STEAM_LOGIN")
-            if not login:
-                raise DzmodError("login_missing", path=self.env.path)
-
-            steam_cmd = self._steam_cmd(login)
             states = [ModState(mod_id=item.mod_id, title=item.title, local_updated=0,
                                remote_updated=item.time_updated) for item in pending]
-
-            self._download(steam_cmd, states)
-            done, failed = self.updater.downloaded(states)
+            done, failed = self._fetch(states)
             results: list[InstallResult] = []
             map_result, refreshed = None, []
 
@@ -272,13 +266,34 @@ class CLI:
         if failed:
             raise DzmodError("installs_failed", count=len(failed))
 
+    def _fetch(self, states: list[ModState]) -> tuple[list[ModState], list[ModState]]:
+        """Prints the `Download` section and returns (ready, failed). Mods that are current in the workshop folder are
+        listed as such and not downloaded; only the others are passed to SteamCMD, which is not started at all if
+        nothing is missing. Raises DzmodError if a download is needed and the login is missing."""
+
+        get = self.messages.get
+        current, missing = self.updater.in_workshop(states)
+        self.console.section(get("section_download"), get("count_mods", count=len(states)))
+        for state in current:
+            self.console.state(state.title, state.mod_id, "ok", get("download_cached"))
+        if not missing:
+            return current, []
+
+        login = self.args.login or self.env.get("DZMOD_STEAM_LOGIN")
+        if not login:
+            raise DzmodError("login_missing", path=self.env.path)
+        if current:
+            self.console.blank()
+        self._download(self._steam_cmd(login), missing)
+        done, failed = self.updater.in_workshop(missing)
+        return current + done, failed
+
     def _download(self, steam_cmd: SteamCmd, states: list[ModState]) -> None:
-        """Runs the SteamCMD download in a `Download` section: SteamCMD lines are printed muted, the running item as
-        a progress line and every finished item as a mod line with its size or the SteamCMD error."""
+        """Runs SteamCMD for the states: its lines are printed muted, the running item as a progress line and every
+        finished item as a mod line with its size or the SteamCMD error."""
 
         get = self.messages.get
         titles = {state.mod_id: state.title for state in states}
-        self.console.section(get("section_download"), get("count_mods", count=len(states)))
         size = Formatter(self.messages).size
         begun: list[str] = []
 
@@ -705,29 +720,37 @@ class CLI:
         return items
 
     def _refresh_mod_list(self) -> list[WorkshopItem]:
-        """Fetches the subscribed mods from Steam with a progress line and saves them. Raises DzmodError if the API
-        key or SteamID is missing."""
+        """Fetches the subscribed mods from Steam with a progress line and saves them. The API key comes from the
+        environment variable or is asked for masked with `*`; it is only held for this request. Raises DzmodError if
+        the SteamID is missing or no API key is given."""
 
         mod_list = self._mod_list()
-        if not mod_list.api_key:
-            raise DzmodError("api_key_missing")
         if not mod_list.steam_id:
             raise DzmodError("steam_id_missing")
 
-        self.console.section(self.messages.get("section_subscribed"))
+        self.console.section(self.messages.get("section_refresh"))
+        api_key = EnvFile.api_key()
+        if not api_key:
+            if not sys.stdin.isatty():
+                raise DzmodError("api_key_missing")
+            self.console.text(self.messages.get("api_key_info"))
+            self.console.blank()
+            api_key = self._masked_input(self.console.prompt(self.messages.get("api_key_prompt"))).strip()
+            self.console.blank()
+
         self.console.progress(self.messages.get("mod_list_loading"))
         try:
-            items = mod_list.refresh(self._print_progress)
+            items = mod_list.refresh(api_key, self._print_progress)
         finally:
             self.console.close_line()
 
-        self.console.success(self.messages.get("mod_list_saved", count=len(items), path=mod_list.path))
+        self.console.success(self.messages.get("mod_list_saved", count=len(items)))
         return items
 
     def _mod_list(self) -> ModList:
-        """Creates the ModList with the API key and SteamID from the env file."""
+        """Creates the ModList with the SteamID from the env file."""
 
-        return ModList(self.updater.api, self.env.get("DZMOD_STEAM_API_KEY"), self.env.get("DZMOD_STEAM_ID"))
+        return ModList(self.updater.api, self.env.get("DZMOD_STEAM_ID"))
 
     def _print_progress(self, loaded: int, total: int) -> None:
         """Overwrites the current terminal line with the loading progress."""
@@ -777,17 +800,11 @@ class CLI:
         return "".join(chars)
 
     def _update(self, outdated: list[ModState]) -> None:
-        """Downloads the outdated mods, verifies them via the ACF and installs the current ones again, which also
-        re-extracts their CE entries (map mods are only copied). Raises DzmodError if the login is missing or at least
-        one download failed."""
+        """Fetches the outdated mods (from the workshop folder if current there, otherwise via SteamCMD) and installs
+        them again, which also re-extracts their CE entries (map mods are only copied). Raises DzmodError if the
+        login is missing for a needed download or at least one mod could not be fetched."""
 
-        login = self.args.login or self.env.get("DZMOD_STEAM_LOGIN")
-        if not login:
-            raise DzmodError("login_missing", path=self.env.path)
-
-        steam_cmd = self._steam_cmd(login)
-        self._download(steam_cmd, outdated)
-        done, failed = self.updater.downloaded(outdated)
+        done, failed = self._fetch(outdated)
         installer = self._installer()
 
         results = [installer.install(state.mod_id, state.title, with_ce=not self.catalog.is_map(state.mod_id))

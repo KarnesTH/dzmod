@@ -41,7 +41,8 @@ class ModInstaller:
 
         self.keys_dir.mkdir(exist_ok=True)
         for key in sorted(mod_dir.rglob("*")):
-            if key.is_file() and key.suffix.lower() == ".bikey" and key.parent.name.lower() == "keys":
+            if (key.is_file() and not key.is_symlink() and key.suffix.lower() == ".bikey"
+                    and key.parent.name.lower() == "keys"):
                 target = self.keys_dir / key.name
                 if not target.exists():
                     shutil.copy2(key, target)

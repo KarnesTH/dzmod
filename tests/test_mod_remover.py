@@ -2,6 +2,7 @@ from pathlib import Path
 
 from dzmod.core.mod_remover import ModRemover
 from dzmod.core.server_config import ServerConfig
+from dzmod.core.server_state import ServerState
 
 
 def add_mod(server: Path, mod_id: str, key: str) -> None:
@@ -24,3 +25,12 @@ def test_shared_key_is_kept_until_last_user_is_removed(server: Path) -> None:
     second = remover.remove("2", "COT", remaining=[])
     assert second.keys_removed == ["shared.bikey"]
     assert not (server / "keys" / "shared.bikey").exists()
+
+
+def test_remove_drops_server_state_entry(server: Path) -> None:
+    add_mod(server, "1", "a.bikey")
+    ServerState(server).set("1", 100)
+
+    ModRemover(server, ServerConfig(server)).remove("1", "CF", remaining=[])
+
+    assert ServerState(server).get("1") is None

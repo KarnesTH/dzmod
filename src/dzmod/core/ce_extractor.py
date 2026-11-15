@@ -30,14 +30,14 @@ class CEExtractor:
 
     def extract(self) -> CEData:
         """Parses every XML file that starts with `<`, sorts its entries into the kinds, resolves map variants and
-        merges duplicate names. Files that are no XML at all (info texts with `.xml` extension) are ignored;
+        merges duplicate names. Symbolic links are skipped. Files that are no XML at all (info texts with `.xml` extension) are ignored;
         broken XML is reported in `data.invalid`."""
 
         data = CEData()
         found: dict[str, list[tuple[Path, ET.Element]]] = {kind: [] for kind in self.KINDS}
 
         for path in sorted(self.mod_dir.rglob("*")):
-            if not path.is_file() or path.suffix.lower() != ".xml":
+            if not path.is_file() or path.is_symlink() or path.suffix.lower() != ".xml":
                 continue
 
             raw = path.read_bytes().lstrip(b"\xef\xbb\xbf").lstrip()

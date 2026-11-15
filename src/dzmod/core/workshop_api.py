@@ -1,6 +1,7 @@
 import json
 import time
 from collections.abc import Iterator
+from typing import ClassVar
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode
 from urllib.request import Request, urlopen
@@ -12,12 +13,13 @@ from dzmod.utils.errors import DzmodError
 class WorkshopAPI:
     """Queries `ISteamRemoteStorage/GetPublishedFileDetails` and `IPublishedFileService/GetUserFiles`."""
 
-    DETAILS_URL = "https://api.steampowered.com/ISteamRemoteStorage/GetPublishedFileDetails/v1/"
-    USER_FILES_URL = "https://api.steampowered.com/IPublishedFileService/GetUserFiles/v1/"
-    APP_ID = 221100
-    BATCH_SIZE = 100
-    RATE_LIMIT_WAIT = 30
-    RATE_LIMIT_RETRIES = 3
+    KEY_HEADER: ClassVar[str] = "x-webapi-key"
+    DETAILS_URL: ClassVar[str] = "https://api.steampowered.com/ISteamRemoteStorage/GetPublishedFileDetails/v1/"
+    USER_FILES_URL: ClassVar[str] = "https://api.steampowered.com/IPublishedFileService/GetUserFiles/v1/"
+    APP_ID: ClassVar[int] = 221100
+    BATCH_SIZE: ClassVar[int] = 100
+    RATE_LIMIT_WAIT: ClassVar[int] = 30
+    RATE_LIMIT_RETRIES: ClassVar[int] = 3
 
     def __init__(self, timeout: int = 30) -> None:
         self.timeout = timeout
@@ -44,13 +46,12 @@ class WorkshopAPI:
 
     def user_subscriptions(self, api_key: str, steam_id: str) -> Iterator[tuple[list[dict], int]]:
         """Pages through the DayZ Workshop items the user with `steam_id` has subscribed to via `GetUserFiles` with
-        `type=mysubscriptions` and yields each page as raw `publishedfiledetails` entries together with the total
+        `type=mysubscriptions` (the API key goes in the `x-webapi-key` header, not into the URL) and yields each page as raw `publishedfiledetails` entries together with the total
         count. Stops when all items are loaded or a page is empty."""
 
         page, loaded = 1, 0
         while True:
             params = {
-                "key": api_key,
                 "steamid": steam_id,
                 "appid": self.APP_ID,
                 "creator_appid": self.APP_ID,
@@ -65,7 +66,8 @@ class WorkshopAPI:
                 "return_vote_data": "true",
                 "return_metadata": "true",
             }
-            response = self._request(Request(f"{self.USER_FILES_URL}?{urlencode(params)}")).get("response", {})
+            request = Request(f"{self.USER_FILES_URL}?{urlencode(params)}", headers={self.KEY_HEADER: api_key})
+            response = self._request(request).get("response", {})
             details = response.get("publishedfiledetails", [])
             total = int(response.get("total", 0))
 

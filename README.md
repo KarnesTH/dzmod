@@ -35,16 +35,16 @@ uv tool install .
 
 Run the server commands inside the DayZ server directory or pass `--server-dir`.
 
-| Command                          | Description                                                                |
-|----------------------------------|----------------------------------------------------------------------------|
-| `dzmod setup`                    | Set Steam login, SteamID64 and API key (runs automatically on first start) |
-| `dzmod mods [-r]`                | Show your subscribed DayZ mods; `-r` fetches them from Steam again         |
-| `dzmod check`                    | Show the update state of all installed mods                                |
-| `dzmod update`                   | Download outdated mods and install them again                              |
-| `dzmod install`                  | Pick mods from your subscriptions                                          |
-| `dzmod install --mod-id <ID …>`  | Install mods by Workshop ID                                                |
-| `dzmod install --collection`     | Install the mods of `dzmod.col`                                            |
-| `dzmod remove [--mod-id <ID …>]` | Remove mods, their keys and CE entries                                     |
+| Command                          | Description                                                        |
+|----------------------------------|--------------------------------------------------------------------|
+| `dzmod setup`                    | Set Steam login and SteamID64 (runs automatically on first start)  |
+| `dzmod mods [-r]`                | Show your subscribed DayZ mods; `-r` fetches them from Steam again |
+| `dzmod check`                    | Show the update state of all installed mods                        |
+| `dzmod update`                   | Download outdated mods and install them again                      |
+| `dzmod install`                  | Pick mods from your subscriptions                                  |
+| `dzmod install --mod-id <ID …>`  | Install mods by Workshop ID                                        |
+| `dzmod install --collection`     | Install the mods of `dzmod.col`                                    |
+| `dzmod remove [--mod-id <ID …>]` | Remove mods, their keys and CE entries                             |
 
 What `install` does:
 
@@ -74,13 +74,11 @@ MMG Base Storage
 
 Mods are listed by their Workshop title. The order is used for `-mod=` after CF, COT and Dabs Framework.
 
-## Files
+## Security
 
-| Path                             | Content                                                |
-|----------------------------------|--------------------------------------------------------|
-| `~/.config/dzmod/.env`           | Steam login, SteamID64, API key (permissions `600`)    |
-| `~/.local/share/dzmod/mods.json` | Your subscribed mods as returned by Steam              |
-| `~/.cache/dzmod/repos/`          | Downloaded mission and Expansion template repositories |
+- The Steam Web API key is never written to disk. dzmod asks for it (masked) only when your subscribed mods are
+  reloaded, or reads it from the `DZMOD_STEAM_API_KEY` environment variable.
+- dzmod stores no Steam password; SteamCMD handles the login itself.
 
 ## Development
 

@@ -4,6 +4,7 @@ from pathlib import Path
 from dzmod.core.economy_core import EconomyCore
 from dzmod.core.mod_installer import ModInstaller
 from dzmod.core.server_config import ServerConfig
+from dzmod.core.server_state import ServerState
 from dzmod.models.remove_result import RemoveResult
 
 
@@ -18,7 +19,8 @@ class ModRemover:
 
     def remove(self, mod_id: str, title: str, remaining: list[str]) -> RemoveResult:
         """Removes the mod. A key is deleted from the server's `keys` folder only if none of the `remaining` mod
-        folders ships a key with the same file name; otherwise it is reported as kept with the IDs using it."""
+        folders ships a key with the same file name; otherwise it is reported as kept with the IDs using it. The mod is
+        also removed from the server state."""
 
         mod_dir = self.server_dir / mod_id
         result = RemoveResult(mod_id=mod_id, title=title)
@@ -37,6 +39,7 @@ class ModRemover:
 
         if mod_dir.exists():
             shutil.rmtree(mod_dir)
+        ServerState(self.server_dir).remove(mod_id)
 
         if self.mission_dir:
             folder = f"ce_{ModInstaller.folder_name(mod_id, title)}"
