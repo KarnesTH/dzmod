@@ -1,8 +1,6 @@
 import json
 import os
-import time
 from collections.abc import Callable
-from dataclasses import asdict
 from pathlib import Path
 
 from dzmod.utils.errors import DzmodError
@@ -11,57 +9,54 @@ from dzmod.models.workshop_item import WorkshopItem
 
 
 class ModList:
-    """Keeps the list of all DayZ Workshop mods as JSON in `$XDG_CACHE_HOME/dzmod/mods.json`
-    (default `~/.cache/dzmod/mods.json`) and refreshes it from Steam when it is missing or older than MAX_AGE."""
+    """Keeps the user's subscribed DayZ Workshop mods as the complete Steam responses in
+    `$XDG_DATA_HOME/dzmod/mods.json` (default `~/.local/share/dzmod/mods.json`)."""
 
-    MAX_AGE = 7 * 24 * 60 * 60
-
-    def __init__(self, api: WorkshopAPI, api_key: str | None) -> None:
-        cache_home = Path(os.environ.get("XDG_CACHE_HOME") or Path.home() / ".cache")
-        self.path = cache_home / "dzmod" / "mods.json"
+    def __init__(self, api: WorkshopAPI, api_key: str | None, steam_id: str | None) -> None:
+        data_home = Path(os.environ.get("XDG_DATA_HOME") or Path.home() / ".local" / "share")
+        self.path = data_home / "dzmod" / "mods.json"
         self.api = api
         self.api_key = api_key
+        self.steam_id = steam_id
 
     @property
-    def outdated(self) -> bool:
-        """True if the cache file is missing or older than MAX_AGE."""
+    def exists(self) -> bool:
+        """True if the file exists."""
 
-        return not self.path.is_file() or time.time() - self.path.stat().st_mtime > self.MAX_AGE
+        return self.path.is_file()
 
-    def load(self, progress: Callable[[int, int], None] | None = None) -> list[WorkshopItem]:
-        """Returns the cached mods, refreshing them first if the cache is outdated. Without an API key an existing
-        cache is used as it is. Raises DzmodError if there is neither a cache nor an API key."""
-
-        if self.outdated and self.api_key:
-            return self.refresh(progress)
-        if not self.path.is_file():
-            raise DzmodError("api_key_missing")
+    def load(self) -> list[WorkshopItem]:
+        """Reads the stored Steam responses and builds WorkshopItems from them. Raises DzmodError if the file is
+        damaged or in an older format."""
 
         try:
-            data = json.loads(self.path.read_text(encoding="utf-8"))
-            return [WorkshopItem(**{**entry, "tags": tuple(entry.get("tags", ()))}) for entry in data]
-        except (json.JSONDecodeError, TypeError) as err:
-            if self.api_key:
-                return self.refresh(progress)
+            return [WorkshopItem.from_detail(detail) for detail in json.loads(self.path.read_text(encoding="utf-8"))]
+        except (json.JSONDecodeError, TypeError, KeyError, AttributeError) as err:
             raise DzmodError("mod_list_corrupt", path=self.path) from err
 
     def refresh(self, progress: Callable[[int, int], None] | None = None) -> list[WorkshopItem]:
-        """Fetches all pages from Steam, reports `(loaded, total)` after each page and writes the cache atomically
-        via a temporary file."""
+        """Fetches all subscribed mods page by page, reports `(loaded, total)` after each page and writes the raw
+        responses atomically via a temporary file. Raises DzmodError if the API key or SteamID is missing."""
 
-        items: list[WorkshopItem] = []
+        if not self.api_key:
+            raise DzmodError("api_key_missing")
+        if not self.steam_id:
+            raise DzmodError("steam_id_missing")
+
+        details: list[dict] = []
         seen: set[str] = set()
 
-        for page, total in self.api.query_files(self.api_key):
-            for item in page:
-                if item.mod_id not in seen:
-                    seen.add(item.mod_id)
-                    items.append(item)
+        for page, total in self.api.user_subscriptions(self.api_key, self.steam_id):
+            for detail in page:
+                mod_id = str(detail.get("publishedfileid", ""))
+                if mod_id and mod_id not in seen and detail.get("result", 1) == 1:
+                    seen.add(mod_id)
+                    details.append(detail)
             if progress:
-                progress(len(items), total)
+                progress(len(details), total)
 
         self.path.parent.mkdir(parents=True, exist_ok=True)
         tmp = self.path.with_suffix(".tmp")
-        tmp.write_text(json.dumps([asdict(item) for item in items], ensure_ascii=False), encoding="utf-8")
+        tmp.write_text(json.dumps(details, ensure_ascii=False), encoding="utf-8")
         tmp.replace(self.path)
-        return items
+        return [WorkshopItem.from_detail(detail) for detail in details]

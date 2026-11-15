@@ -20,7 +20,8 @@ TEXTS = {
         "api_invalid_response": "Steam API returned an invalid response.",
         "steamcmd_missing": "SteamCMD not found ('{binary}'). Install SteamCMD or pass its path with --steamcmd.",
         "not_a_server": "{path} is not a DayZ server directory ({binary} not found).",
-        "config_missing": "No configuration found. Run dzmod once in a terminal or create {path}.",
+        "config_missing": "No configuration found. Run dzmod setup in a terminal or create {path}.",
+        "setup_needs_terminal": "dzmod setup needs a terminal. Alternatively edit {path}.",
         "file_error": "File error at {path}: {error}",
         "setup_intro": (
             "Setting up dzmod.\n"
@@ -30,21 +31,26 @@ TEXTS = {
             "  dzmod does not store a password. On the first download SteamCMD\n"
             "  signs in by itself and remembers the login.\n"
             "\n"
-            "Steam Web API key (optional)\n"
-            "  Only needed for the Workshop mod list.\n"
+            "SteamID64 and Steam Web API key (optional)\n"
+            "  Only needed to list your subscribed DayZ mods.\n"
+            "  SteamID64: 17 digits, shown under https://store.steampowered.com/account\n"
             "  Create a key: https://steamcommunity.com/dev/apikey\n"
             "\n"
             "Saved to: {path}\n"
         ),
         "setup_login": "Steam login: ",
+        "setup_steam_id": "SteamID64 (optional): ",
+        "steam_id_invalid": "Invalid SteamID64: 17 digits starting with 7656119.",
         "setup_api_key": "Steam Web API key (optional): ",
         "setup_done": "Saved to {path}.",
-        "api_key_missing": "No mod list cached and no Steam Web API key set. Add DZMOD_STEAM_API_KEY to {path}.",
+        "api_key_missing": "No Steam Web API key set. Add it with: dzmod setup",
+        "steam_id_missing": "No SteamID64 set. Add it with: dzmod setup",
         "api_key_invalid": "Steam rejected the Web API key. Check DZMOD_STEAM_API_KEY.",
-        "mod_list_corrupt": "Mod list {path} is damaged. Set a Steam Web API key to reload it.",
-        "mod_list_loading": "Loading the Workshop mod list from Steam (only needed once a week) ...",
+        "mod_list_corrupt": "Mod list {path} is damaged. Reload it with: dzmod mods",
+        "mod_list_loading": "Loading your subscribed DayZ mods from Steam ...",
+        "mod_list_saved": "Saved {count} mods to {path}.",
         "mod_list_progress": "  {loaded} / {total} mods",
-        "mod_list_empty": "The Workshop mod list is empty.",
+        "mod_list_empty": "No subscribed DayZ mods found. Subscribe in the Steam Workshop and run: dzmod mods",
         "col_id": "ID",
         "col_title": "Title",
         "col_updated": "Updated",
@@ -53,6 +59,8 @@ TEXTS = {
         "col_created": "Created",
         "col_tags": "Tags",
         "date_format": "%Y-%m-%d",
+        "decimal_separator": ".",
+        "mod_table_summary": "{count} mods · {size}",
         "picker_status": "{selected} selected  |  {position} / {total}",
         "picker_help": "Up/Down move  PgUp/PgDn page  Space select  Enter confirm  q cancel",
         "selection_cancelled": "Nothing selected.",
@@ -62,11 +70,11 @@ TEXTS = {
         "ask_collection_description": "Description (optional): ",
         "collection_created": "Created {path} with {count} mod(s).",
         "collection_extended": "Added {count} mod(s) to {path}.",
-        "title_not_unique": "Warning: the title '{title}' exists several times in the Workshop and cannot be resolved from the collection.",
+        "title_not_unique": "Warning: the title '{title}' exists several times among your subscribed mods and cannot be resolved from the collection.",
         "collection_missing": "No collection found ({path}).",
         "collection_empty": "The collection {path} contains no mods.",
         "collection_header": "Collection: {name} ({count} mod(s))",
-        "mod_not_found": "Not found in the Workshop list, skipped: {title}",
+        "mod_not_found": "Not among your subscribed mods, skipped: {title}",
         "mod_ambiguous": "Title is not unique, skipped: {title} ({ids})",
         "invalid_id": "Invalid mod ID: {mod_id}",
         "unavailable_id": "{mod_id} is not available on the Workshop, skipped.",
@@ -91,7 +99,8 @@ TEXTS = {
         "api_invalid_response": "Steam API hat eine ungültige Antwort geliefert.",
         "steamcmd_missing": "SteamCMD nicht gefunden ('{binary}'). SteamCMD installieren oder den Pfad mit --steamcmd angeben.",
         "not_a_server": "{path} ist kein DayZ-Server-Verzeichnis ({binary} nicht gefunden).",
-        "config_missing": "Keine Konfiguration gefunden. dzmod einmal im Terminal starten oder {path} anlegen.",
+        "config_missing": "Keine Konfiguration gefunden. dzmod setup im Terminal ausführen oder {path} anlegen.",
+        "setup_needs_terminal": "dzmod setup braucht ein Terminal. Alternativ {path} bearbeiten.",
         "file_error": "Dateifehler bei {path}: {error}",
         "setup_intro": (
             "dzmod wird eingerichtet.\n"
@@ -101,21 +110,26 @@ TEXTS = {
             "  dzmod speichert kein Passwort. Beim ersten Download meldet sich\n"
             "  SteamCMD selbst an und merkt sich die Anmeldung.\n"
             "\n"
-            "Steam-Web-API-Key (optional)\n"
-            "  Wird nur für die Mod-Liste aus dem Workshop gebraucht.\n"
+            "SteamID64 und Steam-Web-API-Key (optional)\n"
+            "  Nur nötig, um deine abonnierten DayZ-Mods aufzulisten.\n"
+            "  SteamID64: 17 Ziffern, steht unter https://store.steampowered.com/account\n"
             "  Key erstellen: https://steamcommunity.com/dev/apikey\n"
             "\n"
             "Gespeichert wird in: {path}\n"
         ),
         "setup_login": "Steam-Login: ",
+        "setup_steam_id": "SteamID64 (optional): ",
+        "steam_id_invalid": "Ungültige SteamID64: 17 Ziffern, beginnend mit 7656119.",
         "setup_api_key": "Steam-Web-API-Key (optional): ",
         "setup_done": "Gespeichert in {path}.",
-        "api_key_missing": "Keine Mod-Liste vorhanden und kein Steam-Web-API-Key gesetzt. DZMOD_STEAM_API_KEY in {path} eintragen.",
+        "api_key_missing": "Kein Steam-Web-API-Key gesetzt. Eintragen mit: dzmod setup",
+        "steam_id_missing": "Keine SteamID64 gesetzt. Eintragen mit: dzmod setup",
         "api_key_invalid": "Steam hat den Web-API-Key abgelehnt. DZMOD_STEAM_API_KEY prüfen.",
-        "mod_list_corrupt": "Mod-Liste {path} ist beschädigt. Mit gesetztem Steam-Web-API-Key wird sie neu geladen.",
-        "mod_list_loading": "Lade die Workshop-Mod-Liste von Steam (nur einmal pro Woche nötig) ...",
+        "mod_list_corrupt": "Mod-Liste {path} ist beschädigt. Neu laden mit: dzmod mods",
+        "mod_list_loading": "Lade deine abonnierten DayZ-Mods von Steam ...",
+        "mod_list_saved": "{count} Mods in {path} gespeichert.",
         "mod_list_progress": "  {loaded} / {total} Mods",
-        "mod_list_empty": "Die Workshop-Mod-Liste ist leer.",
+        "mod_list_empty": "Keine abonnierten DayZ-Mods gefunden. Im Steam-Workshop abonnieren und danach: dzmod mods",
         "col_id": "ID",
         "col_title": "Titel",
         "col_updated": "Aktualisiert",
@@ -124,6 +138,8 @@ TEXTS = {
         "col_created": "Erstellt",
         "col_tags": "Tags",
         "date_format": "%d.%m.%Y",
+        "decimal_separator": ",",
+        "mod_table_summary": "{count} Mods · {size}",
         "picker_status": "{selected} ausgewählt  |  {position} / {total}",
         "picker_help": "Hoch/Runter bewegen  Bild↑/Bild↓ blättern  Leertaste auswählen  Enter bestätigen  q abbrechen",
         "selection_cancelled": "Nichts ausgewählt.",
@@ -133,11 +149,11 @@ TEXTS = {
         "ask_collection_description": "Beschreibung (optional): ",
         "collection_created": "{path} mit {count} Mod(s) angelegt.",
         "collection_extended": "{count} Mod(s) zu {path} hinzugefügt.",
-        "title_not_unique": "Achtung: Der Titel '{title}' existiert mehrfach im Workshop und kann aus der Kollektion nicht aufgelöst werden.",
+        "title_not_unique": "Achtung: Der Titel '{title}' kommt unter deinen abonnierten Mods mehrfach vor und kann aus der Kollektion nicht aufgelöst werden.",
         "collection_missing": "Keine Kollektion gefunden ({path}).",
         "collection_empty": "Die Kollektion {path} enthält keine Mods.",
         "collection_header": "Kollektion: {name} ({count} Mod(s))",
-        "mod_not_found": "Nicht in der Workshop-Liste gefunden, übersprungen: {title}",
+        "mod_not_found": "Nicht unter deinen abonnierten Mods, übersprungen: {title}",
         "mod_ambiguous": "Titel nicht eindeutig, übersprungen: {title} ({ids})",
         "invalid_id": "Ungültige Mod-ID: {mod_id}",
         "unavailable_id": "{mod_id} ist nicht im Workshop verfügbar, übersprungen.",

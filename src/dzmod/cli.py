@@ -11,6 +11,7 @@ from dzmod.utils.env_file import EnvFile
 from dzmod.utils.messages import Messages
 from dzmod.core.mod_list import ModList
 from dzmod.core.mod_picker import ModPicker
+from dzmod.core.mod_table import ModTable
 from dzmod.models.mod_state import ModState
 from dzmod.core.mod_updater import ModUpdater
 from dzmod.core.steam_cmd import SteamCmd
@@ -19,9 +20,11 @@ from dzmod.models.workshop_item import WorkshopItem
 
 
 class CLI:
-    """Parses the arguments and runs the `check`, `update` and `install` subcommands."""
+    """Parses the arguments and runs the subcommands. `setup` and `mods` only configure the CLI and work in any
+    directory; `check`, `update` and `install` need a DayZ server directory."""
 
     SERVER_BINARY = "DayZServer"
+    STEAM_ID_PREFIX = "7656119"
 
     def __init__(self, messages: Messages) -> None:
         self.messages = messages
@@ -34,18 +37,30 @@ class CLI:
         )
 
     def run(self) -> None:
-        """Runs the first-start setup if needed, verifies the server directory and dispatches to the subcommand.
+        """Runs the first-start setup if needed and dispatches to the subcommand; without a subcommand `check` runs.
         Raises DzmodError on any failure."""
+
+        if self.args.command == "setup":
+            self._setup()
+            return
 
         if not self.env.exists:
             self._setup()
+
+        if self.args.command == "mods":
+            self._show_mods()
+            return
 
         if not (self.updater.server_dir / self.SERVER_BINARY).is_file():
             raise DzmodError("not_a_server", path=self.updater.server_dir, binary=self.SERVER_BINARY)
 
         if self.args.command == "install":
             self._install()
-            return
+        else:
+            self._check()
+
+    def _check(self) -> None:
+        """Prints the update state of all mods in the server directory and runs the update for `update`."""
 
         if not self.updater.mod_ids():
             print(self.messages.get("no_mods", path=self.updater.server_dir))
@@ -65,31 +80,41 @@ class CLI:
             self._update(outdated)
 
     def _setup(self) -> None:
-        """Asks for the Steam login (required) and the API key (optional, masked with `*`) and writes them to the
-        env file. Raises DzmodError if stdin is not a terminal."""
+        """Asks for the Steam login (required), the SteamID64 (optional, 17 digits starting with STEAM_ID_PREFIX) and
+        the API key (optional, masked with `*`) and writes them to the env file. Raises DzmodError if stdin is not a
+        terminal."""
 
         if not sys.stdin.isatty():
-            raise DzmodError("config_missing", path=self.env.path)
+            raise DzmodError("setup_needs_terminal" if self.env.exists else "config_missing", path=self.env.path)
 
         print(self.messages.get("setup_intro", path=self.env.path))
 
         login = ""
         while not login:
             login = input(self.messages.get("setup_login")).strip()
+
+        while True:
+            steam_id = input(self.messages.get("setup_steam_id")).strip()
+            valid = steam_id.isdigit() and len(steam_id) == 17 and steam_id.startswith(self.STEAM_ID_PREFIX)
+            if not steam_id or valid:
+                break
+            print(self.messages.get("steam_id_invalid"))
+
         api_key = self._masked_input(self.messages.get("setup_api_key")).strip()
 
-        self.env.create({"DZMOD_STEAM_LOGIN": login, "DZMOD_STEAM_API_KEY": api_key})
+        self.env.create({"DZMOD_STEAM_LOGIN": login, "DZMOD_STEAM_ID": steam_id, "DZMOD_STEAM_API_KEY": api_key})
         print(self.messages.get("setup_done", path=self.env.path))
 
     def _install(self) -> None:
-        """Collects the mods from `--mod-id`, `--mod-list` or `--collection` and prints them."""
+        """Collects the mods from `--mod-id`, `--collection` or, by default, the selection from the mod list and
+        prints them."""
 
-        if self.args.mod_list:
-            mods = self._mods_from_list()
+        if self.args.mod_id:
+            mods = self._mods_from_ids()
         elif self.args.collection:
             mods = self._mods_from_collection()
         else:
-            mods = self._mods_from_ids()
+            mods = self._mods_from_list()
 
         if not mods:
             print(self.messages.get("nothing_to_install"))
@@ -114,7 +139,8 @@ class CLI:
         return [items[mod_id] for mod_id in mod_ids if mod_id in items]
 
     def _mods_from_list(self) -> list[WorkshopItem]:
-        """Loads the mod list, lets the user pick mods and optionally adds them to the collection file."""
+        """Loads the mod list, lets the user pick mods and, if more than one was picked, offers to add them to the
+        collection file."""
 
         items = self._load_mod_list()
         selected = ModPicker(items, self.messages, self.args.verbose).run()
@@ -122,9 +148,10 @@ class CLI:
             print(self.messages.get("selection_cancelled"))
             return []
 
-        answer = input(self.messages.get("ask_collection")).strip().lower()
-        if answer in self.messages.get("yes_answers").split(","):
-            self._save_collection(selected, items)
+        if len(selected) > 1:
+            answer = input(self.messages.get("ask_collection")).strip().lower()
+            if answer in self.messages.get("yes_answers").split(","):
+                self._save_collection(selected, items)
         return selected
 
     def _save_collection(self, selected: list[WorkshopItem], items: list[WorkshopItem]) -> None:
@@ -174,28 +201,49 @@ class CLI:
             print(self.messages.get("mod_ambiguous", title=title, ids=", ".join(mod_ids)), file=sys.stderr)
         return resolved
 
+    def _show_mods(self) -> None:
+        """Prints the subscribed mods as a table; with `--refresh` they are fetched from Steam first. Raises
+        DzmodError if the list is empty."""
+
+        items = self._refresh_mod_list() if self.args.refresh else self._load_mod_list()
+        if not items:
+            raise DzmodError("mod_list_empty")
+        ModTable(items, self.messages).print()
+
     def _load_mod_list(self) -> list[WorkshopItem]:
-        """Loads the cached mod list and shows the progress while it is refreshed from Steam."""
+        """Reads the mod list, creating it from Steam first if it does not exist yet. Raises DzmodError if the list
+        is empty."""
 
-        mod_list = ModList(self.updater.api, self.env.get("DZMOD_STEAM_API_KEY"))
-        refreshing = mod_list.outdated and mod_list.api_key
-
-        if refreshing:
-            print(self.messages.get("mod_list_loading"))
-
-        try:
-            items = mod_list.load(self._print_progress if refreshing else None)
-        except DzmodError as err:
-            if err.key == "api_key_missing":
-                raise DzmodError("api_key_missing", path=self.env.path) from err
-            raise
-        finally:
-            if refreshing:
-                print()
+        mod_list = self._mod_list()
+        items = mod_list.load() if mod_list.exists else self._refresh_mod_list()
 
         if not items:
             raise DzmodError("mod_list_empty")
         return items
+
+    def _refresh_mod_list(self) -> list[WorkshopItem]:
+        """Fetches the subscribed mods from Steam with a progress line and saves them. Raises DzmodError if the API
+        key or SteamID is missing."""
+
+        mod_list = self._mod_list()
+        if not mod_list.api_key:
+            raise DzmodError("api_key_missing")
+        if not mod_list.steam_id:
+            raise DzmodError("steam_id_missing")
+
+        print(self.messages.get("mod_list_loading"))
+        try:
+            items = mod_list.refresh(self._print_progress)
+        finally:
+            print()
+
+        print(self.messages.get("mod_list_saved", count=len(items), path=mod_list.path))
+        return items
+
+    def _mod_list(self) -> ModList:
+        """Creates the ModList with the API key and SteamID from the env file."""
+
+        return ModList(self.updater.api, self.env.get("DZMOD_STEAM_API_KEY"), self.env.get("DZMOD_STEAM_ID"))
 
     def _print_progress(self, loaded: int, total: int) -> None:
         """Overwrites the current terminal line with the loading progress."""
@@ -284,7 +332,8 @@ class CLI:
 
     @staticmethod
     def _parser() -> argparse.ArgumentParser:
-        """Builds the parser with the global path options and the `check` / `update` / `install` subcommands."""
+        """Builds the parser with the global path options and the `setup` / `mods` / `check` / `update` / `install`
+        subcommands."""
 
         parser = argparse.ArgumentParser(prog="dzmod")
         parser.add_argument("-V", "--version", action="version", version=f"%(prog)s {version('dzmod')}")
@@ -292,19 +341,22 @@ class CLI:
         parser.add_argument("--steam-dir", default="~/.steam/steam", help="Steam/SteamCMD root")
 
         subparsers = parser.add_subparsers(dest="command", required=False)
+        subparsers.add_parser("setup", help="set the Steam login, SteamID64 and Steam Web API key")
+        mods = subparsers.add_parser("mods", help="show your subscribed DayZ Workshop mods")
+        mods.add_argument("-r", "--refresh", action="store_true", help="fetch the subscribed mods from Steam first")
         subparsers.add_parser("check", help="list mods and their update state")
 
         update = subparsers.add_parser("update", help="download outdated mods and copy them into the server directory")
         update.add_argument("--login", help="Steam account that owns DayZ")
         update.add_argument("--steamcmd", default="steamcmd", help="SteamCMD binary")
 
-        install = subparsers.add_parser("install", help="install mods by ID, from the Workshop list or the collection")
+        install = subparsers.add_parser("install",
+                                        help="pick from your subscribed mods, or install by ID or collection")
         install.add_argument("--login", help="Steam account that owns DayZ")
         install.add_argument("--steamcmd", default="steamcmd", help="SteamCMD binary")
         install.add_argument("-v", "--verbose", action="store_true", help="show more columns in the mod list")
-        source = install.add_mutually_exclusive_group(required=True)
+        source = install.add_mutually_exclusive_group()
         source.add_argument("--mod-id", nargs="+", metavar="ID", help="one or more mod IDs")
-        source.add_argument("--mod-list", action="store_true", help="pick mods from the Workshop list")
         source.add_argument("--collection", action="store_true",
                             help=f"use {CollectionFile.FILE_NAME} in the server directory")
 

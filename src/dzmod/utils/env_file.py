@@ -6,7 +6,7 @@ class EnvFile:
     """Reads `KEY=VALUE` lines from `$XDG_CONFIG_HOME/dzmod/.env` (default `~/.config/dzmod/.env`).
     Variables already set in the environment take precedence over the file."""
 
-    KEYS = ("DZMOD_STEAM_LOGIN", "DZMOD_STEAM_API_KEY")
+    KEYS = ("DZMOD_STEAM_LOGIN", "DZMOD_STEAM_ID", "DZMOD_STEAM_API_KEY")
 
     def __init__(self) -> None:
         config_home = Path(os.environ.get("XDG_CONFIG_HOME") or Path.home() / ".config")

@@ -10,13 +10,12 @@ from dzmod.models.workshop_item import WorkshopItem
 
 
 class WorkshopAPI:
-    """Queries `ISteamRemoteStorage/GetPublishedFileDetails` and `IPublishedFileService/QueryFiles`."""
+    """Queries `ISteamRemoteStorage/GetPublishedFileDetails` and `IPublishedFileService/GetUserFiles`."""
 
     DETAILS_URL = "https://api.steampowered.com/ISteamRemoteStorage/GetPublishedFileDetails/v1/"
-    QUERY_URL = "https://api.steampowered.com/IPublishedFileService/QueryFiles/v1/"
+    USER_FILES_URL = "https://api.steampowered.com/IPublishedFileService/GetUserFiles/v1/"
     APP_ID = 221100
     BATCH_SIZE = 100
-    QUERY_RANKED_BY_SUBSCRIPTIONS = 12
     RATE_LIMIT_WAIT = 30
     RATE_LIMIT_RETRIES = 3
 
@@ -38,41 +37,47 @@ class WorkshopAPI:
             for detail in body.get("response", {}).get("publishedfiledetails", []):
                 if detail.get("result") != 1:
                     continue
-                item = self._item(detail)
+                item = WorkshopItem.from_detail(detail)
                 items[item.mod_id] = item
 
         return items
 
-    def query_files(self, api_key: str) -> Iterator[tuple[list[WorkshopItem], int]]:
-        """Pages through all DayZ Workshop items ranked by subscriptions via `cursor` and yields each page with the
-        total item count. Stops when a page is empty or the cursor does not change."""
+    def user_subscriptions(self, api_key: str, steam_id: str) -> Iterator[tuple[list[dict], int]]:
+        """Pages through the DayZ Workshop items the user with `steam_id` has subscribed to via `GetUserFiles` with
+        `type=mysubscriptions` and yields each page as raw `publishedfiledetails` entries together with the total
+        count. Stops when all items are loaded or a page is empty."""
 
-        cursor = "*"
+        page, loaded = 1, 0
         while True:
             params = {
                 "key": api_key,
-                "query_type": self.QUERY_RANKED_BY_SUBSCRIPTIONS,
-                "cursor": cursor,
-                "numperpage": self.BATCH_SIZE,
+                "steamid": steam_id,
                 "appid": self.APP_ID,
                 "creator_appid": self.APP_ID,
-                "filetype": 0,
+                "type": "mysubscriptions",
+                "page": page,
+                "numperpage": self.BATCH_SIZE,
                 "return_details": "true",
                 "return_tags": "true",
+                "return_kv_tags": "true",
+                "return_children": "true",
+                "return_previews": "true",
+                "return_vote_data": "true",
+                "return_metadata": "true",
             }
-            body = self._request(Request(f"{self.QUERY_URL}?{urlencode(params)}"))
-            response = body.get("response", {})
+            response = self._request(Request(f"{self.USER_FILES_URL}?{urlencode(params)}")).get("response", {})
             details = response.get("publishedfiledetails", [])
+            total = int(response.get("total", 0))
 
             if not details:
                 return
 
-            yield [self._item(detail) for detail in details if detail.get("title")], int(response.get("total", 0))
+            loaded += len(details)
+            yield details, total
 
-            next_cursor = response.get("next_cursor")
-            if not next_cursor or next_cursor == cursor:
+            if loaded >= total:
                 return
-            cursor = next_cursor
+            page += 1
 
     def _request(self, req: Request) -> dict:
         """Sends the request and returns the decoded JSON body. HTTP 429 is retried after RATE_LIMIT_WAIT seconds up
@@ -96,17 +101,3 @@ class WorkshopAPI:
                 raise DzmodError("api_invalid_response") from err
 
         raise DzmodError("api_http_error", code=429)
-
-    @staticmethod
-    def _item(detail: dict) -> WorkshopItem:
-        """Builds a WorkshopItem from a `publishedfiledetails` entry. Missing numbers become 0."""
-
-        return WorkshopItem(
-            mod_id=str(detail["publishedfileid"]),
-            title=detail.get("title", ""),
-            time_updated=int(detail.get("time_updated", 0)),
-            time_created=int(detail.get("time_created", 0)),
-            subscriptions=int(detail.get("subscriptions", 0)),
-            file_size=int(detail.get("file_size", 0) or 0),
-            tags=tuple(tag.get("tag", "") for tag in detail.get("tags", []) if tag.get("tag")),
-        )
