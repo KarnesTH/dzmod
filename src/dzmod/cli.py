@@ -9,11 +9,14 @@ from dzmod.core.collection_file import CollectionFile
 from dzmod.utils.errors import DzmodError
 from dzmod.utils.env_file import EnvFile
 from dzmod.utils.messages import Messages
+from dzmod.core.mod_installer import ModInstaller
 from dzmod.core.mod_list import ModList
 from dzmod.core.mod_picker import ModPicker
 from dzmod.core.mod_table import ModTable
+from dzmod.models.install_result import InstallResult
 from dzmod.models.mod_state import ModState
 from dzmod.core.mod_updater import ModUpdater
+from dzmod.core.server_config import ServerConfig
 from dzmod.core.steam_cmd import SteamCmd
 from dzmod.core.steam_cmd_installer import SteamCmdInstaller
 from dzmod.core.workshop_api import WorkshopAPI
@@ -166,8 +169,9 @@ class CLI:
         return executable
 
     def _install(self) -> None:
-        """Collects the mods from `--mod-id`, `--collection` or, by default, the selection from the mod list and
-        prints them."""
+        """Collects the mods from `--mod-id`, `--collection` or, by default, the selection from the mod list, skips
+        mods already in the server, downloads the rest in one SteamCMD run, installs them with keys and CE files and
+        prints the `-mod=` parameter. Raises DzmodError if the login is missing or a download failed."""
 
         if self.args.mod_id:
             mods = self._mods_from_ids()
@@ -180,9 +184,98 @@ class CLI:
             print(self.messages.get("nothing_to_install"))
             return
 
-        print(self.messages.get("install_list", count=len(mods)))
+        installed = set(self.updater.mod_ids())
         for item in mods:
-            print(f"  {item.mod_id:<12} {item.title}")
+            if item.mod_id in installed:
+                print(self.messages.get("already_installed", mod_id=item.mod_id, title=item.title))
+        pending = [item for item in mods if item.mod_id not in installed]
+
+        failed: list[ModState] = []
+        if pending:
+            login = self.args.login or self.env.get("DZMOD_STEAM_LOGIN")
+            if not login:
+                raise DzmodError("login_missing", path=self.env.path)
+
+            steam_cmd = self._steam_cmd(login)
+            states = [ModState(mod_id=item.mod_id, title=item.title, local_updated=0,
+                               remote_updated=item.time_updated) for item in pending]
+
+            print(self.messages.get("downloading", count=len(states)))
+            code = steam_cmd.download([state.mod_id for state in states])
+            if code != 0:
+                print(self.messages.get("steamcmd_failed", code=code), file=sys.stderr)
+
+            done, failed = self.updater.downloaded(states)
+            installer = ModInstaller(self.updater, ServerConfig(self.updater.server_dir), self._choose_variant)
+            if done and not installer.has_mission:
+                print(self.messages.get("mission_missing", path=installer.mission_dir or ServerConfig.FILE_NAME),
+                      file=sys.stderr)
+
+            for state in done:
+                self._print_install(installer.install(state.mod_id, state.title))
+            for state in failed:
+                print(self.messages.get("download_failed", mod_id=state.mod_id, title=state.title), file=sys.stderr)
+
+        installer = ModInstaller(self.updater, ServerConfig(self.updater.server_dir), self._choose_variant)
+        if self.updater.mod_ids():
+            print(self.messages.get("launch_parameter", parameter=installer.launch_parameter(self._launch_order())))
+
+        if failed:
+            raise DzmodError("installs_failed", count=len(failed))
+
+    def _print_install(self, result: InstallResult, header: str = "mod_installed") -> None:
+        """Prints the mod with its copied keys, the written CE files and all CE notes."""
+
+        print(self.messages.get(header, mod_id=result.mod_id, title=result.title))
+        for key in result.keys:
+            print(self.messages.get("key_copied", name=key))
+        for kind, folder in result.chosen_variants.items():
+            print(self.messages.get("ce_variant", kind=kind, folder=folder))
+        if result.ce_folder:
+            print(self.messages.get("ce_added", folder=result.ce_folder))
+            for name, _, count in result.ce_files:
+                print(self.messages.get("ce_file", name=name, count=count))
+        for kind, names in result.conflicts.items():
+            print(self.messages.get("ce_conflict", kind=kind, names=", ".join(names)), file=sys.stderr)
+        for kind, options in result.skipped_variants.items():
+            print(self.messages.get("ce_variant_skipped", kind=kind, options=", ".join(options)), file=sys.stderr)
+        for path in result.invalid:
+            print(self.messages.get("ce_invalid", path=path), file=sys.stderr)
+        if result.economy_error:
+            print(self.messages.get("economy_core_invalid", error=result.economy_error), file=sys.stderr)
+
+    def _choose_variant(self, title: str, kind: str, options: list[str]) -> str | None:
+        """Lists the map variant folders of a mod and returns the one picked by number, or None on empty input or
+        without a terminal."""
+
+        if not sys.stdin.isatty():
+            return None
+
+        print(self.messages.get("variant_question", title=title, kind=kind))
+        for number, option in enumerate(options, start=1):
+            print(f"  {number}) {option}")
+
+        while True:
+            answer = input(self.messages.get("variant_prompt")).strip()
+            if not answer:
+                return None
+            if answer.isdigit() and 1 <= int(answer) <= len(options):
+                return options[int(answer) - 1]
+
+    def _launch_order(self) -> list[str]:
+        """Returns the mod IDs in the order of the collection file, resolved via the stored mod list. Returns an
+        empty list if the collection or the mod list does not exist or cannot be read."""
+
+        collection = CollectionFile(self.updater.server_dir)
+        mod_list = self._mod_list()
+        if not collection.exists or not mod_list.exists:
+            return []
+        try:
+            collection.read()
+            resolved, _, _ = collection.resolve(mod_list.load())
+        except DzmodError:
+            return []
+        return [item.mod_id for item in resolved]
 
     def _mods_from_ids(self) -> list[WorkshopItem]:
         """Validates the IDs, looks them up via the Steam API and warns about IDs the Workshop does not return."""
@@ -353,8 +446,8 @@ class CLI:
         return "".join(chars)
 
     def _update(self, outdated: list[ModState]) -> None:
-        """Downloads the outdated mods, verifies them via the ACF and copies the current ones into the server
-        directory. Raises DzmodError if the login is missing or at least one download failed."""
+        """Downloads the outdated mods, verifies them via the ACF and installs the current ones again, which also
+        re-extracts their CE entries. Raises DzmodError if the login is missing or at least one download failed."""
 
         login = self.args.login or self.env.get("DZMOD_STEAM_LOGIN")
         if not login:
@@ -367,10 +460,10 @@ class CLI:
             print(self.messages.get("steamcmd_failed", code=code), file=sys.stderr)
 
         done, failed = self.updater.downloaded(outdated)
+        installer = ModInstaller(self.updater, ServerConfig(self.updater.server_dir), self._choose_variant)
 
         for state in done:
-            self.updater.install(state.mod_id)
-            print(self.messages.get("installed", mod_id=state.mod_id, title=state.title))
+            self._print_install(installer.install(state.mod_id, state.title), header="installed")
 
         for state in failed:
             print(self.messages.get("download_failed", mod_id=state.mod_id, title=state.title), file=sys.stderr)

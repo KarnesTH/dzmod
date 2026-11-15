@@ -69,5 +69,19 @@
   "invalid_id": "Ungültige Mod-ID: {mod_id}",
   "unavailable_id": "{mod_id} ist nicht im Workshop verfügbar, übersprungen.",
   "nothing_to_install": "Nichts zu installieren.",
-  "install_list": "{count} Mod(s) zu installieren:"
+  "already_installed": "Bereits installiert, übersprungen: {mod_id} {title}",
+  "mission_missing": "Keine Mission mit cfgeconomycore.xml gefunden ({path}), CE-Dateien werden übersprungen.",
+  "mod_installed": "Installiert {mod_id} {title}",
+  "key_copied": "  Key kopiert: {name}",
+  "ce_added": "  CE: {folder}",
+  "ce_invalid": "  Kaputtes XML, übersprungen: {path}",
+  "economy_core_invalid": "  cfgeconomycore.xml konnte nicht ergänzt werden: {error}",
+  "launch_parameter": "Startparameter:\n  {parameter}",
+  "installs_failed": "{count} Mod(s) konnten nicht installiert werden.",
+  "ce_file": "    {name} ({count} Einträge)",
+  "ce_conflict": "  Mehrfach mit unterschiedlichen Werten definiert, letzte Definition gilt ({kind}): {names}",
+  "ce_variant": "  Map-Variante ({kind}): {folder}",
+  "ce_variant_skipped": "  Map-Varianten nicht zugeordnet, {kind} übersprungen: {options}",
+  "variant_question": "{title} liefert mehrere Map-Varianten für {kind}:",
+  "variant_prompt": "Nummer wählen (Enter = überspringen): "
 }

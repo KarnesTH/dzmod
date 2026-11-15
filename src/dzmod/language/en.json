@@ -69,5 +69,19 @@
   "invalid_id": "Invalid mod ID: {mod_id}",
   "unavailable_id": "{mod_id} is not available on the Workshop, skipped.",
   "nothing_to_install": "Nothing to install.",
-  "install_list": "{count} mod(s) to install:"
+  "already_installed": "Already installed, skipped: {mod_id} {title}",
+  "mission_missing": "No mission with cfgeconomycore.xml found ({path}), CE files are skipped.",
+  "mod_installed": "Installed {mod_id} {title}",
+  "key_copied": "  Key copied: {name}",
+  "ce_added": "  CE: {folder}",
+  "ce_invalid": "  Broken XML, skipped: {path}",
+  "economy_core_invalid": "  cfgeconomycore.xml could not be updated: {error}",
+  "launch_parameter": "Start parameter:\n  {parameter}",
+  "installs_failed": "{count} mod(s) could not be installed.",
+  "ce_file": "    {name} ({count} entries)",
+  "ce_conflict": "  Defined several times with different values, last one used ({kind}): {names}",
+  "ce_variant": "  Map variant ({kind}): {folder}",
+  "ce_variant_skipped": "  Map variants not assigned, {kind} skipped: {options}",
+  "variant_question": "{title} ships several map variants for {kind}:",
+  "variant_prompt": "Pick a number (Enter = skip): "
 }
