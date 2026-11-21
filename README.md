@@ -5,7 +5,7 @@
 <p align="center">Install, update and remove DayZ Workshop mods on a Linux dedicated server via SteamCMD.</p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/version-0.1.0-b210f2" alt="Version 0.1.0" />
+  <img src="https://img.shields.io/badge/version-0.1.1-b210f2" alt="Version 0.1.1" />
   <img src="https://img.shields.io/badge/python-3.14-3776ab" alt="Python 3.14" />
   <img src="https://img.shields.io/badge/platform-linux-0c0a11" alt="Platform Linux" />
   <img src="https://img.shields.io/badge/dependencies-none-2ea44f" alt="No dependencies" />
